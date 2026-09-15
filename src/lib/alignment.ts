@@ -17,7 +17,11 @@ type Transition = {
 const GROUP_LIMIT = 3;
 
 function normalize(text: string): string {
-  return text.replace(/[\s\p{P}\p{S}]+/gu, '').toLowerCase();
+  return text
+    .replace(/^[（(][^）)]{1,8}[）)]\s*/u, '')
+    .replace(/^[^:：]{1,4}[:：]\s*$/u, '')
+    .replace(/[\s\p{P}\p{S}]+/gu, '')
+    .toLowerCase();
 }
 
 function editDistance(left: string, right: string): number {

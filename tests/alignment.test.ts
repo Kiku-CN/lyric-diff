@@ -29,4 +29,9 @@ describe('lyric alignment', () => {
     expect(rows[0]).toMatchObject({ kind: 'equal', localIds: ['1', '2'], localText: '你好\n世界', referenceText: '你好世界' });
     expect(rows[1]).toMatchObject({ kind: 'equal', localIds: ['3'], referenceText: '后来' });
   });
+
+  it('ignores singer markers when comparing lyric content', () => {
+    const rows = alignSubtitles([local('拥抱的时候 心情有点痛', '1')], ['（孙）拥抱的时候 心情有点痛']);
+    expect(rows[0]).toMatchObject({ kind: 'equal', localIds: ['1'] });
+  });
 });
