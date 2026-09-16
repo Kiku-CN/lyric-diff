@@ -43,7 +43,9 @@ describe('alignment controls', () => {
     const referenceCells = () => Array.from(container.querySelectorAll('.diff-row:not(.add) .diff-cell.reference')).map((cell) => cell.textContent);
 
     expect(algorithm.value).toBe('fragment');
-    expect(segmentation.checked).toBe(false);
+    expect(segmentation.checked).toBe(true);
+    expect(referenceCells()[0]).toContain('把酒倒满');
+    expect(referenceCells()[1]).toContain('朋友一生一起走');
     expect(Array.from(container.querySelectorAll('.diff-row.add .diff-cell.reference')).map((cell) => cell.textContent)).toEqual(['无关开场复制', '无关结尾复制']);
     expect(container.querySelector<HTMLButtonElement>('.diff-row.add .row-controls button')!.disabled).toBe(true);
     expect(container.querySelector<HTMLInputElement>('.diff-row.add .row-controls input')!.disabled).toBe(false);
@@ -58,8 +60,8 @@ describe('alignment controls', () => {
     await act(async () => {
       segmentation.click();
     });
-    expect(referenceCells()[0]).toContain('把酒倒满');
-    expect(referenceCells()[1]).toContain('朋友一生一起走');
+    expect(segmentation.checked).toBe(false);
+    expect(Array.from(container.querySelectorAll('.diff-cell.reference')).map((cell) => cell.textContent).join('')).toContain('把酒倒满朋友一生一起走');
     const currentEdit = container.querySelector<HTMLInputElement>('.diff-row:not(.add) .row-controls input')!;
     expect(currentEdit.value).not.toBe('手工校对');
 
@@ -90,6 +92,7 @@ describe('alignment controls', () => {
       algorithm.value = 'from-start';
       algorithm.dispatchEvent(new Event('change', { bubbles: true }));
       container.querySelector<HTMLInputElement>('input[aria-label="智能分句"]')!.click();
+      container.querySelector<HTMLInputElement>('input[aria-label="智能分句"]')!.click();
     });
     await act(async () => resolveLyric('把酒倒满朋友一生一起走\n那些日子不再有'));
     const referenceCells = Array.from(container.querySelectorAll('.diff-cell.reference')).map((cell) => cell.textContent);
@@ -112,5 +115,36 @@ describe('alignment controls', () => {
       checkboxes()[5].click();
     });
     expect(checkboxes().map((checkbox) => checkbox.checked)).toEqual([true, false, true, true, true, true]);
+  });
+
+  it('previews the selected TXT export with current edits and excluded rows', async () => {
+    vi.mocked(fetchNeteaseLyric).mockResolvedValue('把酒倒满\n朋友一生一起走\n那些日子不再有');
+    await act(async () => root.render(<App />));
+    await act(async () => {
+      container.querySelector<HTMLFormElement>('form.search-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await act(async () => container.querySelector<HTMLButtonElement>('.candidate')!.click());
+    const edit = container.querySelector<HTMLInputElement>('.diff-row .row-controls > input')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(edit, '现场修订');
+      edit.dispatchEvent(new Event('input', { bubbles: true }));
+      container.querySelector<HTMLInputElement>('.diff-row:nth-child(2) input[type="checkbox"]')!.click();
+      const format = container.querySelector<HTMLSelectElement>('select[aria-label="导出格式"]')!;
+      format.value = 'txt';
+      format.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="预览校对稿"]')!.click());
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('TXT');
+    expect(container.querySelector('.preview-content')?.textContent).toBe('现场修订\n那些日子不再有\n');
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="关闭预览"]')!.click());
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('shows an empty preview when SRT has no timed entries', async () => {
+    await act(async () => root.render(<App />));
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="预览校对稿"]')!.click());
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('没有可导出的字幕');
+    await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { alignSubtitles, type AlignmentRow } from './lib/alignment';
 import type { MatchingAlgorithm } from './lib/matchingAlgorithms';
 import { copyText, splitReferenceLines } from './lib/clipboard';
@@ -22,13 +22,15 @@ function App() {
   const [rows, setRows] = useState<AlignmentRow[]>([]);
   const [referenceLines, setReferenceLines] = useState<string[]>([]);
   const [matchingAlgorithm, setMatchingAlgorithm] = useState<MatchingAlgorithm>('fragment');
-  const [smartSegmentation, setSmartSegmentation] = useState(false);
-  const matchingSettings = useRef({ algorithm: 'fragment' as MatchingAlgorithm, smartSegmentation: false });
+  const [smartSegmentation, setSmartSegmentation] = useState(true);
+  const matchingSettings = useRef({ algorithm: 'fragment' as MatchingAlgorithm, smartSegmentation: true });
   const lyricRequestId = useRef(0);
   const [isSearching, setIsSearching] = useState(false);
   const [isLoadingLyric, setIsLoadingLyric] = useState(false);
   const [error, setError] = useState('');
   const [exportKind, setExportKind] = useState<InputKind>('srt');
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const previewCloseRef = useRef<HTMLButtonElement>(null);
   const [copiedLineKey, setCopiedLineKey] = useState<string | null>(null);
 
   const hasTimeline = entries.some((entry) => entry.startMs !== undefined);
@@ -36,6 +38,28 @@ function App() {
     stats[row.kind] += 1;
     return stats;
   }, { equal: 0, change: 0, add: 0, remove: 0 } as Record<AlignmentRow['kind'], number>), [rows]);
+  const exportText = useMemo(() => {
+    const output = createExportEntries(entries, rows, exportKind);
+    return exportKind === 'srt' ? exportSrt(output) : exportTxt(output);
+  }, [entries, rows, exportKind]);
+
+  useEffect(() => {
+    if (!previewOpen) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    previewCloseRef.current?.focus();
+    function handlePreviewKeydown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setPreviewOpen(false);
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        previewCloseRef.current?.focus();
+      }
+    }
+    document.addEventListener('keydown', handlePreviewKeydown);
+    return () => {
+      document.removeEventListener('keydown', handlePreviewKeydown);
+      previousFocus?.focus();
+    };
+  }, [previewOpen]);
 
   function applySourceText(text: string, kind: InputKind, name = fileName) {
     lyricRequestId.current += 1;
@@ -137,9 +161,7 @@ function App() {
   }
 
   function download() {
-    const output = createExportEntries(entries, rows, exportKind);
-    const body = exportKind === 'srt' ? exportSrt(output) : exportTxt(output);
-    const blob = new Blob([body], { type: exportKind === 'srt' ? 'text/plain;charset=utf-8' : 'text/plain;charset=utf-8' });
+    const blob = new Blob([exportText], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
@@ -211,7 +233,7 @@ function App() {
       {error && <div className="notice error" role="alert"><strong>需要注意</strong><span>{error}</span><button onClick={() => setError('')} aria-label="关闭提示">×</button></div>}
 
       <section className="review-section">
-        <div className="review-heading"><div><p className="section-kicker">02 / REVIEW</p><h2>逐句对照</h2><p>{selectedSong ? `${selectedSong.name} · ${selectedSong.artists}` : '选择一首参考歌曲后开始对齐'}</p></div><div className="review-actions"><div className="stats"><span><b>{diffStats.change}</b> 差异</span><span><b>{diffStats.add}</b> 参考新增</span><span><b>{diffStats.remove}</b> 现场独有</span></div><select value={exportKind} onChange={(event) => setExportKind(event.target.value as InputKind)} aria-label="导出格式"><option value="srt">导出 SRT</option><option value="txt">导出 TXT</option></select><button className="primary-action" onClick={download} disabled={!entries.length}>下载校对稿 ↓</button></div></div>
+        <div className="review-heading"><div><p className="section-kicker">02 / REVIEW</p><h2>逐句对照</h2><p>{selectedSong ? `${selectedSong.name} · ${selectedSong.artists}` : '选择一首参考歌曲后开始对齐'}</p></div><div className="review-actions"><div className="stats"><span><b>{diffStats.change}</b> 差异</span><span><b>{diffStats.add}</b> 参考新增</span><span><b>{diffStats.remove}</b> 现场独有</span></div><select value={exportKind} onChange={(event) => setExportKind(event.target.value as InputKind)} aria-label="导出格式"><option value="srt">导出 SRT</option><option value="txt">导出 TXT</option></select><button className="preview-action" onClick={() => setPreviewOpen(true)} disabled={!entries.length} aria-label="预览校对稿">预览</button><button className="primary-action" onClick={download} disabled={!entries.length}>下载校对稿 ↓</button></div></div>
         <div className="review-settings">
           <label htmlFor="matching-algorithm">对比算法</label>
           <select id="matching-algorithm" aria-label="对比算法" value={matchingAlgorithm} onChange={(event) => changeMatchingAlgorithm(event.target.value as MatchingAlgorithm)} title="切换算法会重置逐行修改">
@@ -229,6 +251,7 @@ function App() {
       </section>
 
       <footer className="footer-note"><span>原始字幕不会被覆盖</span><span>·</span><span>网易云歌词仅作为参考</span><span>·</span><span>所有行按勾选结果导出</span></footer>
+      {previewOpen && <div className="preview-overlay" onClick={(event) => { if (event.target === event.currentTarget) setPreviewOpen(false); }}><section className="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title"><div className="preview-heading"><div><h3 id="preview-title">导出预览</h3><span>{exportKind.toUpperCase()}</span></div><button ref={previewCloseRef} type="button" onClick={() => setPreviewOpen(false)} aria-label="关闭预览">关闭</button></div>{exportText.trim() ? <pre className="preview-content">{exportText}</pre> : <p className="preview-empty">没有可导出的字幕</p>}</section></div>}
     </main>
   );
 }
