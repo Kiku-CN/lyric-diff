@@ -96,4 +96,21 @@ describe('alignment controls', () => {
     expect(referenceCells[0]).toContain('把酒倒满');
     expect(referenceCells[1]).toContain('朋友一生一起走');
   });
+
+  it('lets users toggle export for leading, middle and trailing reference additions', async () => {
+    vi.mocked(fetchNeteaseLyric).mockResolvedValue('片头\n把酒倒满\n中间新增\n朋友一生一起走\n那些日子不再有\n片尾');
+    await act(async () => root.render(<App />));
+    await act(async () => {
+      container.querySelector<HTMLFormElement>('form.search-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await act(async () => container.querySelector<HTMLButtonElement>('.candidate')!.click());
+    const checkboxes = () => Array.from(container.querySelectorAll<HTMLInputElement>('.diff-row.add .row-controls input[type="checkbox"]'));
+    expect(checkboxes().map((checkbox) => checkbox.checked)).toEqual([false, true, false]);
+    await act(async () => {
+      checkboxes()[0].click();
+      checkboxes()[1].click();
+      checkboxes()[2].click();
+    });
+    expect(checkboxes().map((checkbox) => checkbox.checked)).toEqual([true, false, true]);
+  });
 });

@@ -79,10 +79,12 @@ textarea:focus, input:focus, select:focus { border-color: #8d9c92; box-shadow: 0
 .copy-reference:disabled { opacity: .35; cursor: not-allowed; }
 .reference-lines { display: grid; gap: 8px; width: 100%; }
 .reference-line { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; min-height: 18px; }
-.row-controls { display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 5px; padding: 8px 0 8px 10px; border-left: 1px solid #e1e2db; }
+.row-controls { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; gap: 5px; padding: 8px 0 8px 10px; border-left: 1px solid #e1e2db; }
 .row-controls button { border: 1px solid #d4d8cf; background: #fffefa; color: #778078; padding: 6px 7px; font-size: 10px; }.row-controls button.active { background: #1d2421; border-color: #1d2421; color: #fffefa; }.row-controls button.reference-choice { background: #28795f; border-color: #28795f; }.row-controls button:disabled { opacity: .4; cursor: not-allowed; }
 .row-controls input { min-width: 0; width: 100%; padding: 6px 7px; font: 11px "DM Mono", monospace; }
 .row-controls input:disabled { opacity: .62; cursor: not-allowed; }
+.row-controls .export-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 0 5px; color: #28795f; font-size: 10px; white-space: nowrap; cursor: pointer; }
+.row-controls .export-toggle input { width: 15px; height: 15px; padding: 0; margin: 0; accent-color: #28795f; cursor: pointer; }
 .empty-review, .loading-state { min-height: 230px; display: grid; place-content: center; justify-items: center; text-align: center; color: #89918c; }.empty-review strong { color: #1d2421; margin-top: 13px; }.empty-review p { max-width: 320px; margin: 7px 0 0; font-size: 12px; line-height: 1.6; }.empty-symbol { display: grid; place-items: center; width: 42px; height: 42px; background: #ece9df; color: #9d8a61; font-size: 22px; }.loading-state { font: 12px "DM Mono", monospace; }
 .footer-note { justify-content: center; gap: 10px; margin-top: 27px; color: #9ba29d; font: 10px "DM Mono", monospace; }
 @media (max-width: 900px) { .shell { padding: 0 22px 36px; }.intro-band { padding: 40px 0 32px; display: block; }.workflow-rail { margin-top: 25px; }.workspace-grid { grid-template-columns: 1fr; }.review-heading { display: block; }.review-actions { margin-top: 18px; flex-wrap: wrap; }.diff-header, .diff-row { grid-template-columns: 28px 1fr 1fr; }.diff-header span:nth-child(4) { display: none; }.row-controls { grid-column: 2 / -1; border-left: 0; border-top: 1px solid #e1e2db; padding: 7px 10px 7px 0; }.diff-row { grid-template-rows: auto auto; }.line-number { grid-row: 1 / span 2; } }

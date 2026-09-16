@@ -47,6 +47,7 @@ describe('lyric alignment', () => {
     );
     expect(rows.map((row) => row.referenceText)).toEqual(['开场', '主歌', '副歌第一句', '副歌第二句', '尾声']);
     expect(rows.map((row) => row.kind)).toEqual(['add', 'add', 'equal', 'equal', 'add']);
+    expect(rows.filter((row) => row.kind === 'add').map((row) => row.includeInExport)).toEqual([false, false, false]);
   });
 
   it('keeps the from-start algorithm anchored to the beginning', () => {
@@ -125,6 +126,7 @@ describe('lyric alignment', () => {
       ['equal', '第一句'], ['add', '没有唱到的句子'], ['equal', '第二句'],
     ]);
     expect(rows[1].localIds).toEqual([]);
+    expect(rows[1].includeInExport).toBe(true);
   });
 
   it('retains unmatched lines even when no SRT line matches', () => {

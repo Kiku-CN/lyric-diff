@@ -10,6 +10,7 @@ export type AlignmentRow = {
   localText: string;
   referenceText: string;
   chosenText: string;
+  includeInExport?: boolean;
 };
 
 const REFERENCE_GROUP_LIMIT = 4;
@@ -36,7 +37,7 @@ type Transition = { kind: 'match'; referenceCount: number; localCount: number; p
 type Assignment = { localIndex: number; referenceGroup: string[] } | { referenceIndex: number };
 
 function referenceOnlyRow(referenceText: string, index: number): AlignmentRow {
-  return { id: `add-reference-${index}`, kind: 'add', localIds: [], localText: '', referenceText, chosenText: referenceText };
+  return { id: `add-reference-${index}`, kind: 'add', localIds: [], localText: '', referenceText, chosenText: referenceText, includeInExport: false };
 }
 
 export function alignSubtitles(local: SubtitleEntry[], referenceLines: string[], options: AlignmentOptions = { algorithm: 'fragment', smartSegmentation: false }): AlignmentRow[] {
@@ -124,7 +125,7 @@ export function alignSubtitles(local: SubtitleEntry[], referenceLines: string[],
   const assignments = reversed.reverse();
   for (let index = endReferenceIndex; index < referenceLines.length; index += 1) assignments.push({ referenceIndex: index });
 
-  return assignments.map((assignment) => {
+  const rows = assignments.map((assignment) => {
     if ('referenceIndex' in assignment) {
       return referenceOnlyRow(referenceLines[assignment.referenceIndex], assignment.referenceIndex);
     }
@@ -143,4 +144,11 @@ export function alignSubtitles(local: SubtitleEntry[], referenceLines: string[],
       chosenText: referenceText || entry.text,
     };
   });
+  const lastLocalIndex = rows.reduce((last, row, index) => row.localIds.length === 1 ? index : last, -1);
+  let hasPreviousLocal = false;
+  rows.forEach((row, index) => {
+    if (row.kind === 'add') row.includeInExport = hasPreviousLocal && index < lastLocalIndex;
+    else hasPreviousLocal = true;
+  });
+  return rows;
 }
