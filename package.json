@@ -11,7 +11,7 @@
   "dependencies": {
     "@vitejs/plugin-react": "latest",
     "vite": "latest",
-    "typescript": "latest",
+    "typescript": "~5.9.2",
     "react": "latest",
     "react-dom": "latest",
     "vitest": "latest",

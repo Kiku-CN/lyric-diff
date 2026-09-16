@@ -1,6 +1,8 @@
-import { useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { alignSubtitles, type AlignmentRow } from './lib/alignment';
+import type { MatchingAlgorithm } from './lib/matchingAlgorithms';
 import { copyText, splitReferenceLines } from './lib/clipboard';
+import { createExportEntries } from './lib/reviewExport';
 import { exportSrt, exportTxt, parseSubtitle, type SubtitleEntry } from './lib/subtitles';
 import { fetchNeteaseLyric, searchNetease, stripLyricTimestamps, type NeteaseSong } from './server/netease';
 
@@ -18,6 +20,11 @@ function App() {
   const [songs, setSongs] = useState<NeteaseSong[]>([]);
   const [selectedSong, setSelectedSong] = useState<NeteaseSong | null>(null);
   const [rows, setRows] = useState<AlignmentRow[]>([]);
+  const [referenceLines, setReferenceLines] = useState<string[]>([]);
+  const [matchingAlgorithm, setMatchingAlgorithm] = useState<MatchingAlgorithm>('fragment');
+  const [smartSegmentation, setSmartSegmentation] = useState(false);
+  const matchingSettings = useRef({ algorithm: 'fragment' as MatchingAlgorithm, smartSegmentation: false });
+  const lyricRequestId = useRef(0);
   const [isSearching, setIsSearching] = useState(false);
   const [isLoadingLyric, setIsLoadingLyric] = useState(false);
   const [error, setError] = useState('');
@@ -31,10 +38,14 @@ function App() {
   }, { equal: 0, change: 0, add: 0, remove: 0 } as Record<AlignmentRow['kind'], number>), [rows]);
 
   function applySourceText(text: string, kind: InputKind, name = fileName) {
+    lyricRequestId.current += 1;
     setSourceText(text);
     setInputKind(kind);
     setFileName(name);
     setRows([]);
+    setReferenceLines([]);
+    setSelectedSong(null);
+    setIsLoadingLyric(false);
     try {
       setEntries(parseSubtitle(text, kind));
       setError('');
@@ -73,18 +84,36 @@ function App() {
   }
 
   async function chooseSong(song: NeteaseSong) {
+    const requestId = ++lyricRequestId.current;
     setSelectedSong(song);
     setIsLoadingLyric(true);
     setError('');
     try {
       const lyric = await fetchNeteaseLyric(song.id);
-      setRows(alignSubtitles(entries, stripLyricTimestamps(lyric)));
+      if (requestId !== lyricRequestId.current) return;
+      const lines = stripLyricTimestamps(lyric);
+      setReferenceLines(lines);
+      setRows(alignSubtitles(entries, lines, matchingSettings.current));
     } catch (cause) {
+      if (requestId !== lyricRequestId.current) return;
       setRows([]);
+      setReferenceLines([]);
       setError(cause instanceof Error ? cause.message : '歌词获取失败');
     } finally {
-      setIsLoadingLyric(false);
+      if (requestId === lyricRequestId.current) setIsLoadingLyric(false);
     }
+  }
+
+  function changeMatchingAlgorithm(algorithm: MatchingAlgorithm) {
+    matchingSettings.current = { ...matchingSettings.current, algorithm };
+    setMatchingAlgorithm(algorithm);
+    if (selectedSong && !isLoadingLyric) setRows(alignSubtitles(entries, referenceLines, { algorithm, smartSegmentation }));
+  }
+
+  function changeSmartSegmentation(enabled: boolean) {
+    matchingSettings.current = { ...matchingSettings.current, smartSegmentation: enabled };
+    setSmartSegmentation(enabled);
+    if (selectedSong && !isLoadingLyric) setRows(alignSubtitles(entries, referenceLines, { algorithm: matchingAlgorithm, smartSegmentation: enabled }));
   }
 
   function updateRow(id: string, patch: Partial<AlignmentRow>) {
@@ -108,8 +137,7 @@ function App() {
   }
 
   function download() {
-    const chosenById = new Map(rows.filter((row) => row.localIds.length === 1).flatMap((row) => row.localIds.map((id) => [id, row.chosenText] as const)));
-    const output = entries.map((entry) => ({ ...entry, text: chosenById.get(entry.id) ?? entry.text }));
+    const output = createExportEntries(entries, rows, exportKind);
     const body = exportKind === 'srt' ? exportSrt(output) : exportTxt(output);
     const blob = new Blob([body], { type: exportKind === 'srt' ? 'text/plain;charset=utf-8' : 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -184,15 +212,23 @@ function App() {
 
       <section className="review-section">
         <div className="review-heading"><div><p className="section-kicker">02 / REVIEW</p><h2>逐句对照</h2><p>{selectedSong ? `${selectedSong.name} · ${selectedSong.artists}` : '选择一首参考歌曲后开始对齐'}</p></div><div className="review-actions"><div className="stats"><span><b>{diffStats.change}</b> 差异</span><span><b>{diffStats.add}</b> 参考新增</span><span><b>{diffStats.remove}</b> 现场独有</span></div><select value={exportKind} onChange={(event) => setExportKind(event.target.value as InputKind)} aria-label="导出格式"><option value="srt">导出 SRT</option><option value="txt">导出 TXT</option></select><button className="primary-action" onClick={download} disabled={!entries.length}>下载校对稿 ↓</button></div></div>
+        <div className="review-settings">
+          <label htmlFor="matching-algorithm">对比算法</label>
+          <select id="matching-algorithm" aria-label="对比算法" value={matchingAlgorithm} onChange={(event) => changeMatchingAlgorithm(event.target.value as MatchingAlgorithm)} title="切换算法会重置逐行修改">
+            <option value="fragment">片段匹配</option>
+            <option value="from-start">从头匹配</option>
+          </select>
+          <label className="segmentation-toggle" title="切换智能分句会重置逐行修改"><input type="checkbox" aria-label="智能分句" checked={smartSegmentation} onChange={(event) => changeSmartSegmentation(event.target.checked)} />智能分句</label>
+        </div>
         <div className="diff-header"><span>剪映现场版</span><span>网易云参考版</span><span>处理</span></div>
         <div className="diff-table">
           {isLoadingLyric && <div className="loading-state">正在抓取歌词并按顺序对齐…</div>}
           {!isLoadingLyric && rows.length === 0 && <div className="empty-review"><span className="empty-symbol">↔</span><strong>等待参考歌词</strong><p>先搜索并选择一首歌曲，工具会保留现场顺序，标出每处不同。</p></div>}
-          {!isLoadingLyric && rows.map((row, index) => <div className={`diff-row ${row.kind}`} key={row.id}><div className="line-number">{String(index + 1).padStart(2, '0')}</div><div className="diff-cell local"><span>{row.localText || '—'}</span></div><div className="diff-cell reference">{row.referenceText ? <div className="reference-lines">{splitReferenceLines(row.referenceText).map((lineText, lineIndex) => { const lineKey = `${row.id}-${lineIndex}`; return <div className="reference-line" key={lineKey}><span>{lineText}</span><button className="copy-reference" onClick={() => copyReference(row, lineText, lineIndex)} aria-label={`复制第 ${index + 1} 行网易云歌词的第 ${lineIndex + 1} 句`}>{copiedLineKey === lineKey ? '已复制' : '复制'}</button></div>; })}</div> : <span>—</span>}</div><div className="row-controls"><button onClick={() => chooseRow(row, 'local')} className={row.chosenText === row.localText ? 'active' : ''}>现场</button><button onClick={() => chooseRow(row, 'reference')} className={row.chosenText === row.referenceText && Boolean(row.referenceText) ? 'active reference-choice' : ''} disabled={!row.referenceText || row.localIds.length !== 1} title={row.localIds.length > 1 ? '多个 SRT 条目合并显示，参考文本仅用于对比' : undefined}>参考</button><input aria-label={`编辑第 ${index + 1} 行`} value={row.chosenText} disabled={row.localIds.length > 1} onChange={(event) => updateRow(row.id, { chosenText: event.target.value })} /></div></div>)}
+          {!isLoadingLyric && rows.map((row, index) => <div className={`diff-row ${row.kind}`} key={row.id}><div className="line-number">{String(index + 1).padStart(2, '0')}</div><div className="diff-cell local"><span>{row.localText || '—'}</span></div><div className="diff-cell reference">{row.referenceText ? <div className="reference-lines">{splitReferenceLines(row.referenceText).map((lineText, lineIndex) => { const lineKey = `${row.id}-${lineIndex}`; return <div className="reference-line" key={lineKey}><span>{lineText}</span><button className="copy-reference" onClick={() => copyReference(row, lineText, lineIndex)} aria-label={`复制第 ${index + 1} 行网易云歌词的第 ${lineIndex + 1} 句`}>{copiedLineKey === lineKey ? '已复制' : '复制'}</button></div>; })}</div> : <span>—</span>}</div><div className="row-controls"><button onClick={() => chooseRow(row, 'local')} className={row.chosenText === row.localText ? 'active' : ''} disabled={row.kind === 'add'}>现场</button><button onClick={() => chooseRow(row, 'reference')} className={row.chosenText === row.referenceText && Boolean(row.referenceText) ? 'active reference-choice' : ''} disabled={!row.referenceText || row.localIds.length > 1} title={row.localIds.length > 1 ? '多个 SRT 条目合并显示，参考文本仅用于对比' : undefined}>参考</button><input aria-label={`编辑第 ${index + 1} 行`} value={row.chosenText} disabled={row.localIds.length > 1} onChange={(event) => updateRow(row.id, { chosenText: event.target.value })} /></div></div>)}
         </div>
       </section>
 
-      <footer className="footer-note"><span>原始字幕不会被覆盖</span><span>·</span><span>网易云歌词仅作为参考</span><span>·</span><span>新增参考行默认不写入 SRT 时间轴</span></footer>
+      <footer className="footer-note"><span>原始字幕不会被覆盖</span><span>·</span><span>网易云歌词仅作为参考</span><span>·</span><span>中间新增行自动插入 SRT 时间轴</span></footer>
     </main>
   );
 }

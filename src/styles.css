@@ -57,6 +57,10 @@ textarea:focus, input:focus, select:focus { border-color: #8d9c92; box-shadow: 0
 .review-heading h2 { font-size: 34px; margin-bottom: 7px; }
 .review-heading p:not(.section-kicker) { margin: 0; color: #778078; font-size: 13px; }
 .review-actions { gap: 14px; }
+.review-settings { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; color: #69736d; font-size: 12px; font-weight: 700; }
+.review-settings select { min-height: 36px; padding: 7px 10px; font-size: 12px; }
+.segmentation-toggle { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; margin-left: 10px; cursor: pointer; }
+.segmentation-toggle input { width: 16px; height: 16px; margin: 0; accent-color: #28795f; cursor: pointer; }
 .stats { gap: 15px; color: #778078; font: 11px "DM Mono", monospace; }
 .stats b { color: #1d2421; font-weight: 500; }
 .review-actions select { padding: 9px 10px; font-size: 12px; }
