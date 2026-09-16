@@ -32,14 +32,17 @@ export function parseSubtitle(input: string, extension: 'srt' | 'txt'): Subtitle
   const blocks = input.replace(/^\uFEFF/, '').split(/\r?\n\s*\r?\n/);
   return blocks.flatMap((block, blockIndex) => {
     const lines = block.split(/\r?\n/).map((line) => line.trimEnd());
-    if (lines.length < 3) return [];
+    if (lines.every((line) => !line.trim())) return [];
+    if (lines.length < 3) throw new Error(`第 ${blockIndex + 1} 段格式错误`);
     const indexLine = lines[0].trim();
     const timingLine = lines[1].trim();
     const timing = timingLine.match(timePattern);
     if (!timing) throw new Error(`第 ${blockIndex + 1} 段时间轴格式错误`);
-    const index = Number.parseInt(indexLine, 10);
-    if (!Number.isFinite(index)) throw new Error(`第 ${blockIndex + 1} 段序号格式错误`);
-    return [{ id: String(index), index, startMs: toMs(timingLine.slice(0, 12)), endMs: toMs(timingLine.slice(17)), text: lines.slice(2).join('\n').trim() }];
+    if (!/^\d+$/.test(indexLine)) throw new Error(`第 ${blockIndex + 1} 段序号格式错误`);
+    const index = Number(indexLine);
+    const text = lines.slice(2).join('\n').trim();
+    if (!text) throw new Error(`第 ${blockIndex + 1} 段字幕内容为空`);
+    return [{ id: String(index), index, startMs: toMs(timingLine.slice(0, 12)), endMs: toMs(timingLine.slice(17)), text }];
   });
 }
 

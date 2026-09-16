@@ -24,4 +24,11 @@ describe('subtitle parsing', () => {
     const entries = parseSubtitle('1\n00:00:01,200 --> 00:00:03,500\n一句', 'srt');
     expect(exportSrt(entries)).toBe('1\n00:00:01,200 --> 00:00:03,500\n一句\n');
   });
+
+  it('rejects a non-empty malformed SRT block instead of dropping it', () => {
+    expect(() => parseSubtitle(
+      '1\n00:00:01,000 --> 00:00:02,000\n有效\n\n损坏段落',
+      'srt',
+    )).toThrow('格式错误');
+  });
 });

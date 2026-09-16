@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent as ReactDragEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { alignSubtitles, type AlignmentRow } from './lib/alignment';
 import type { MatchingAlgorithm } from './lib/matchingAlgorithms';
 import { copyText, splitReferenceLines } from './lib/clipboard';
@@ -6,15 +6,17 @@ import { createExportEntries } from './lib/reviewExport';
 import { exportSrt, exportTxt, parseSubtitle, type SubtitleEntry } from './lib/subtitles';
 import { fetchNeteaseLyric, searchNetease, stripLyricTimestamps, type NeteaseSong } from './server/netease';
 
-type InputKind = 'srt' | 'txt';
+type ExportKind = 'srt' | 'txt';
+type SourceView = 'srt' | 'txt';
 
-const starterText = `把酒倒满\n朋友一生一起走\n那些日子不再有`;
+const starterSrt = `1\n00:00:01,000 --> 00:00:03,000\n把酒倒满\n\n2\n00:00:04,000 --> 00:00:06,000\n朋友一生一起走\n\n3\n00:00:07,000 --> 00:00:09,000\n那些日子不再有`;
 
 function App() {
-  const [inputKind, setInputKind] = useState<InputKind>('txt');
-  const [sourceText, setSourceText] = useState(starterText);
-  const [fileName, setFileName] = useState('未命名现场歌词.txt');
-  const [entries, setEntries] = useState<SubtitleEntry[]>(() => parseSubtitle(starterText, 'txt'));
+  const [sourceView, setSourceView] = useState<SourceView>('srt');
+  const [sourceText, setSourceText] = useState(starterSrt);
+  const [draftSourceText, setDraftSourceText] = useState(starterSrt);
+  const [fileName, setFileName] = useState('未命名现场歌词.srt');
+  const [entries, setEntries] = useState<SubtitleEntry[]>(() => parseSubtitle(starterSrt, 'srt'));
   const [playlist, setPlaylist] = useState('');
   const [query, setQuery] = useState('');
   const [songs, setSongs] = useState<NeteaseSong[]>([]);
@@ -25,12 +27,15 @@ function App() {
   const [smartSegmentation, setSmartSegmentation] = useState(true);
   const matchingSettings = useRef({ algorithm: 'fragment' as MatchingAlgorithm, smartSegmentation: true });
   const lyricRequestId = useRef(0);
+  const sourceLoadRequestId = useRef(0);
   const [isSearching, setIsSearching] = useState(false);
   const [isLoadingLyric, setIsLoadingLyric] = useState(false);
   const [error, setError] = useState('');
-  const [exportKind, setExportKind] = useState<InputKind>('srt');
+  const [exportKind, setExportKind] = useState<ExportKind>('srt');
+  const [isDragging, setIsDragging] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const previewCloseRef = useRef<HTMLButtonElement>(null);
+  const sourceFileInputRef = useRef<HTMLInputElement>(null);
   const [copiedLineKey, setCopiedLineKey] = useState<string | null>(null);
 
   const hasTimeline = entries.some((entry) => entry.startMs !== undefined);
@@ -42,6 +47,8 @@ function App() {
     const output = createExportEntries(entries, rows, exportKind);
     return exportKind === 'srt' ? exportSrt(output) : exportTxt(output);
   }, [entries, rows, exportKind]);
+  const parsedTxt = useMemo(() => exportTxt(entries), [entries]);
+  const hasDraftChanges = draftSourceText !== sourceText;
 
   useEffect(() => {
     if (!previewOpen) return;
@@ -61,33 +68,96 @@ function App() {
     };
   }, [previewOpen]);
 
-  function applySourceText(text: string, kind: InputKind, name = fileName) {
+  function resetReviewState() {
     lyricRequestId.current += 1;
-    setSourceText(text);
-    setInputKind(kind);
-    setFileName(name);
     setRows([]);
     setReferenceLines([]);
     setSelectedSong(null);
     setIsLoadingLyric(false);
+  }
+
+  function parseSrtSource(text: string): SubtitleEntry[] {
+    if (!text.trim()) throw new Error('SRT 文件不能为空');
+    const parsed = parseSubtitle(text, 'srt');
+    if (!parsed.length) throw new Error('未找到有效的 SRT 字幕');
+    return parsed;
+  }
+
+  function commitSourceText(text: string, name = fileName) {
+    sourceLoadRequestId.current += 1;
     try {
-      setEntries(parseSubtitle(text, kind));
+      const parsed = parseSrtSource(text);
+      setSourceText(text);
+      setDraftSourceText(text);
+      setFileName(name);
+      setSourceView('srt');
+      setEntries(parsed);
+      resetReviewState();
       setError('');
     } catch (cause) {
-      setEntries([]);
       setError(cause instanceof Error ? cause.message : '无法解析字幕');
     }
   }
 
-  function changeInputKind(kind: InputKind) {
-    applySourceText(sourceText, kind);
+  function updateSrtDraft(text: string) {
+    setDraftSourceText(text);
+    setError('');
+  }
+
+  function handleSourceTabKeydown(event: ReactKeyboardEvent<HTMLButtonElement>, currentView: SourceView) {
+    const nextView = event.key === 'Home' || (event.key === 'ArrowLeft' && currentView === 'txt')
+      ? 'srt'
+      : event.key === 'End' || (event.key === 'ArrowRight' && currentView === 'srt')
+        ? 'txt'
+        : null;
+    if (!nextView) return;
+    event.preventDefault();
+    setSourceView(nextView);
+  }
+
+  function confirmSrtEdit() {
+    if (draftSourceText === sourceText) return;
+    commitSourceText(draftSourceText);
+  }
+
+  async function loadSourceFile(file: File) {
+    const requestId = ++sourceLoadRequestId.current;
+    if (!file.name.toLowerCase().endsWith('.srt')) {
+      setError('仅支持 SRT 文件导入');
+      return;
+    }
+    try {
+      const text = await file.text();
+      if (requestId !== sourceLoadRequestId.current) return;
+      commitSourceText(text, file.name);
+    } catch (cause) {
+      if (requestId !== sourceLoadRequestId.current) return;
+      setError(cause instanceof Error ? cause.message : '无法读取 SRT 文件');
+    }
   }
 
   async function onFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    const extension = file.name.toLowerCase().endsWith('.srt') ? 'srt' : 'txt';
-    applySourceText(await file.text(), extension, file.name);
+    await loadSourceFile(file);
+    event.target.value = '';
+  }
+
+  function onSourceDragOver(event: ReactDragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    setIsDragging(true);
+  }
+
+  function onSourceDragLeave(event: ReactDragEvent<HTMLDivElement>) {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setIsDragging(false);
+  }
+
+  async function onSourceDrop(event: ReactDragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setIsDragging(false);
+    const file = event.dataTransfer.files?.[0];
+    if (file) await loadSourceFile(file);
   }
 
   async function handleSearch(event: FormEvent) {
@@ -202,17 +272,23 @@ function App() {
       </section>
 
       <section className="workspace-grid import-grid">
-        <div className="panel source-panel">
-          <div className="panel-heading">
-            <div><p className="section-kicker">现场文本</p><h3>剪映识别结果</h3></div>
-            <label className="upload-button">上传文件<input type="file" accept=".srt,.txt,text/plain" onChange={onFileChange} /></label>
+        <div className={`panel source-panel ${isDragging ? 'dragging' : ''}`} onDragOver={onSourceDragOver} onDragLeave={onSourceDragLeave} onDrop={onSourceDrop}>
+          <div className={`source-dropzone ${isDragging ? 'dragging' : ''}`} role="region" aria-label="SRT 文件导入区域">
+            <div className="panel-heading">
+              <div><p className="section-kicker">现场文本</p><h3>剪映识别结果</h3></div>
+              <><button type="button" className="upload-button" onClick={() => sourceFileInputRef.current?.click()}>选择 SRT</button><input ref={sourceFileInputRef} className="source-file-input" type="file" tabIndex={-1} aria-hidden="true" accept=".srt,application/x-subrip" onChange={onFileChange} /></>
+            </div>
+            <p className="source-drop-hint">拖动 SRT 文件到这里，或选择文件导入</p>
+            <div className="segmented" role="tablist" aria-label="源文本视图">
+              <button id="source-view-srt" type="button" role="tab" aria-controls="source-srt-panel" aria-selected={sourceView === 'srt'} tabIndex={sourceView === 'srt' ? 0 : -1} className={sourceView === 'srt' ? 'selected' : ''} onClick={() => setSourceView('srt')} onKeyDown={(event) => handleSourceTabKeydown(event, 'srt')}>SRT 编辑</button>
+              <button id="source-view-txt" type="button" role="tab" aria-controls="source-txt-panel" aria-selected={sourceView === 'txt'} tabIndex={sourceView === 'txt' ? 0 : -1} className={sourceView === 'txt' ? 'selected' : ''} onClick={() => setSourceView('txt')} onKeyDown={(event) => handleSourceTabKeydown(event, 'txt')}>TXT 只读</button>
+            </div>
+            <div id={sourceView === 'srt' ? 'source-srt-panel' : 'source-txt-panel'} role="tabpanel" aria-labelledby={sourceView === 'srt' ? 'source-view-srt' : 'source-view-txt'}>
+              {sourceView === 'srt' ? <textarea value={draftSourceText} onChange={(event) => updateSrtDraft(event.target.value)} aria-label="剪映识别结果 SRT" /> : <textarea value={parsedTxt} readOnly aria-label="解析后的 TXT" />}
+            </div>
+            {hasDraftChanges && <div className="source-edit-actions"><span>修改尚未成为识别结果</span><button type="button" className="confirm-source" onClick={confirmSrtEdit}>确定修改</button></div>}
+            <div className="panel-foot"><span>{entries.length} 行已解析</span><span>{hasTimeline ? '时间轴已保留' : '未解析'}</span></div>
           </div>
-          <div className="segmented" role="tablist" aria-label="输入格式">
-            <button className={inputKind === 'txt' ? 'selected' : ''} onClick={() => changeInputKind('txt')}>TXT / 粘贴</button>
-            <button className={inputKind === 'srt' ? 'selected' : ''} onClick={() => changeInputKind('srt')}>SRT 时间轴</button>
-          </div>
-          <textarea value={sourceText} onChange={(event) => applySourceText(event.target.value, inputKind)} aria-label="现场歌词文本" />
-          <div className="panel-foot"><span>{entries.length} 行已解析</span><span>{hasTimeline ? '时间轴已保留' : '纯文本模式'}</span></div>
         </div>
 
         <div className="panel match-panel">
@@ -233,7 +309,7 @@ function App() {
       {error && <div className="notice error" role="alert"><strong>需要注意</strong><span>{error}</span><button onClick={() => setError('')} aria-label="关闭提示">×</button></div>}
 
       <section className="review-section">
-        <div className="review-heading"><div><p className="section-kicker">02 / REVIEW</p><h2>逐句对照</h2><p>{selectedSong ? `${selectedSong.name} · ${selectedSong.artists}` : '选择一首参考歌曲后开始对齐'}</p></div><div className="review-actions"><div className="stats"><span><b>{diffStats.change}</b> 差异</span><span><b>{diffStats.add}</b> 参考新增</span><span><b>{diffStats.remove}</b> 现场独有</span></div><select value={exportKind} onChange={(event) => setExportKind(event.target.value as InputKind)} aria-label="导出格式"><option value="srt">导出 SRT</option><option value="txt">导出 TXT</option></select><button className="preview-action" onClick={() => setPreviewOpen(true)} disabled={!entries.length} aria-label="预览校对稿">预览</button><button className="primary-action" onClick={download} disabled={!entries.length}>下载校对稿 ↓</button></div></div>
+        <div className="review-heading"><div><p className="section-kicker">02 / REVIEW</p><h2>逐句对照</h2><p>{selectedSong ? `${selectedSong.name} · ${selectedSong.artists}` : '选择一首参考歌曲后开始对齐'}</p></div><div className="review-actions"><div className="stats"><span><b>{diffStats.change}</b> 差异</span><span><b>{diffStats.add}</b> 参考新增</span><span><b>{diffStats.remove}</b> 现场独有</span></div><select value={exportKind} onChange={(event) => setExportKind(event.target.value as ExportKind)} aria-label="导出格式"><option value="srt">导出 SRT</option><option value="txt">导出 TXT</option></select><button className="preview-action" onClick={() => setPreviewOpen(true)} disabled={!entries.length} aria-label="预览校对稿">预览</button><button className="primary-action" onClick={download} disabled={!entries.length}>下载校对稿 ↓</button></div></div>
         <div className="review-settings">
           <label htmlFor="matching-algorithm">对比算法</label>
           <select id="matching-algorithm" aria-label="对比算法" value={matchingAlgorithm} onChange={(event) => changeMatchingAlgorithm(event.target.value as MatchingAlgorithm)} title="切换算法会重置逐行修改">

@@ -140,10 +140,10 @@ describe('alignment controls', () => {
     expect(container.querySelector('[role="dialog"]')).toBeNull();
   });
 
-  it('shows an empty preview when SRT has no timed entries', async () => {
+  it('previews the default SRT source', async () => {
     await act(async () => root.render(<App />));
     await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="预览校对稿"]')!.click());
-    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('没有可导出的字幕');
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('把酒倒满');
     await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
     expect(container.querySelector('[role="dialog"]')).toBeNull();
   });
