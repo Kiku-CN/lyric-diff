@@ -18,6 +18,25 @@ describe('review export', () => {
     );
   });
 
+  it('omits an unchecked original subtitle from both formats without changing other times', () => {
+    const entries = parseSubtitle(source, 'srt');
+    const rows = alignSubtitles(entries, ['第一句', '中间新增', '第二句']);
+    expect(rows.map((row) => row.includeInExport)).toEqual([true, true, true]);
+    rows[0].includeInExport = false;
+    expect(exportTxt(createExportEntries(entries, rows, 'txt'))).toBe('中间新增\n第二句\n');
+    expect(createExportEntries(entries, rows, 'srt').map(({ text, startMs, endMs }) => [text, startMs, endMs])).toEqual([
+      ['中间新增', 3000, 5000], ['第二句', 5000, 7000],
+    ]);
+  });
+
+  it('also allows excluding an unmatched local subtitle', () => {
+    const entries = parseSubtitle(source, 'srt');
+    const rows = alignSubtitles(entries, []);
+    expect(rows.map((row) => row.includeInExport)).toEqual([true, true]);
+    rows[1].includeInExport = false;
+    expect(createExportEntries(entries, rows, 'srt').map((entry) => entry.text)).toEqual(['第一句']);
+  });
+
   it('exports manually selected leading and trailing lines with inferred SRT times', () => {
     const entries = parseSubtitle(source, 'srt');
     const rows = alignSubtitles(entries, ['开场', '第一句', '第二句', '尾声']);

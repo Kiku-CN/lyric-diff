@@ -10,7 +10,7 @@ export type AlignmentRow = {
   localText: string;
   referenceText: string;
   chosenText: string;
-  includeInExport?: boolean;
+  includeInExport: boolean;
 };
 
 const REFERENCE_GROUP_LIMIT = 4;
@@ -142,6 +142,7 @@ export function alignSubtitles(local: SubtitleEntry[], referenceLines: string[],
       localText: entry.text,
       referenceText,
       chosenText: referenceText || entry.text,
+      includeInExport: true,
     };
   });
   const lastLocalIndex = rows.reduce((last, row, index) => row.localIds.length === 1 ? index : last, -1);

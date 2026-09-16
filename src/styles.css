@@ -64,10 +64,10 @@ textarea:focus, input:focus, select:focus { border-color: #8d9c92; box-shadow: 0
 .stats { gap: 15px; color: #778078; font: 11px "DM Mono", monospace; }
 .stats b { color: #1d2421; font-weight: 500; }
 .review-actions select { padding: 9px 10px; font-size: 12px; }
-.diff-header { display: grid; grid-template-columns: 38px 1fr 1fr 240px; gap: 0; color: #89918c; border-top: 1px solid #cacdc3; border-bottom: 1px solid #cacdc3; padding: 11px 0; font: 10px "DM Mono", monospace; text-transform: uppercase; letter-spacing: .08em; }
+.diff-header { display: grid; grid-template-columns: 38px minmax(0, 1fr) minmax(0, 1fr) 360px; gap: 0; color: #89918c; border-top: 1px solid #cacdc3; border-bottom: 1px solid #cacdc3; padding: 11px 0; font: 10px "DM Mono", monospace; text-transform: uppercase; letter-spacing: .08em; }
 .diff-header span:nth-child(2) { grid-column: 2; }.diff-header span:nth-child(3) { grid-column: 3; }.diff-header span:nth-child(4) { grid-column: 4; }
 .diff-table { border-bottom: 1px solid #cacdc3; }
-.diff-row { min-height: 58px; display: grid; grid-template-columns: 38px 1fr 1fr 240px; border-bottom: 1px solid #e1e2db; align-items: stretch; }
+.diff-row { min-height: 58px; display: grid; grid-template-columns: 38px minmax(0, 1fr) minmax(0, 1fr) 360px; border-bottom: 1px solid #e1e2db; align-items: stretch; }
 .diff-row:last-child { border-bottom: 0; }
 .line-number { padding: 18px 8px 0 0; color: #a6aca5; text-align: right; font: 10px "DM Mono", monospace; }
 .diff-cell { padding: 15px 14px; border-left: 1px solid #e1e2db; font: 12px/1.5 "DM Mono", monospace; white-space: pre-wrap; }

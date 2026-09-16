@@ -10,7 +10,7 @@ export function createExportEntries(entries: SubtitleEntry[], rows: AlignmentRow
     const row = rows[index];
     if (row.localIds.length === 1) {
       const entry = byId.get(row.localIds[0]);
-      if (entry) result.push({ ...entry, text: row.chosenText });
+      if (entry && row.includeInExport) result.push({ ...entry, text: row.chosenText });
       continue;
     }
     if (row.kind !== 'add' || !row.includeInExport || !row.chosenText.trim()) continue;
