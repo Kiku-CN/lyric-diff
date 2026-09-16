@@ -1,5 +1,6 @@
 import { useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
 import { alignSubtitles, type AlignmentRow } from './lib/alignment';
+import { copyText, splitReferenceLines } from './lib/clipboard';
 import { exportSrt, exportTxt, parseSubtitle, type SubtitleEntry } from './lib/subtitles';
 import { fetchNeteaseLyric, searchNetease, stripLyricTimestamps, type NeteaseSong } from './server/netease';
 
@@ -21,6 +22,7 @@ function App() {
   const [isLoadingLyric, setIsLoadingLyric] = useState(false);
   const [error, setError] = useState('');
   const [exportKind, setExportKind] = useState<InputKind>('srt');
+  const [copiedLineKey, setCopiedLineKey] = useState<string | null>(null);
 
   const hasTimeline = entries.some((entry) => entry.startMs !== undefined);
   const diffStats = useMemo(() => rows.reduce((stats, row) => {
@@ -91,6 +93,18 @@ function App() {
 
   function chooseRow(row: AlignmentRow, choice: 'local' | 'reference') {
     updateRow(row.id, { chosenText: choice === 'reference' ? row.referenceText : row.localText });
+  }
+
+  async function copyReference(row: AlignmentRow, lineText: string, lineIndex: number) {
+    if (!lineText) return;
+    const lineKey = `${row.id}-${lineIndex}`;
+    try {
+      await copyText(lineText);
+      setCopiedLineKey(lineKey);
+      window.setTimeout(() => setCopiedLineKey((current) => current === lineKey ? null : current), 1_500);
+    } catch {
+      setError('无法写入剪贴板，请检查浏览器权限');
+    }
   }
 
   function download() {
@@ -174,7 +188,7 @@ function App() {
         <div className="diff-table">
           {isLoadingLyric && <div className="loading-state">正在抓取歌词并按顺序对齐…</div>}
           {!isLoadingLyric && rows.length === 0 && <div className="empty-review"><span className="empty-symbol">↔</span><strong>等待参考歌词</strong><p>先搜索并选择一首歌曲，工具会保留现场顺序，标出每处不同。</p></div>}
-          {!isLoadingLyric && rows.map((row, index) => <div className={`diff-row ${row.kind}`} key={row.id}><div className="line-number">{String(index + 1).padStart(2, '0')}</div><div className="diff-cell local"><span>{row.localText || '—'}</span></div><div className="diff-cell reference"><span>{row.referenceText || '—'}</span></div><div className="row-controls"><button onClick={() => chooseRow(row, 'local')} className={row.chosenText === row.localText ? 'active' : ''}>现场</button><button onClick={() => chooseRow(row, 'reference')} className={row.chosenText === row.referenceText && Boolean(row.referenceText) ? 'active reference-choice' : ''} disabled={!row.referenceText || row.localIds.length !== 1} title={row.localIds.length > 1 ? '多个 SRT 条目合并显示，参考文本仅用于对比' : undefined}>参考</button><input aria-label={`编辑第 ${index + 1} 行`} value={row.chosenText} disabled={row.localIds.length > 1} onChange={(event) => updateRow(row.id, { chosenText: event.target.value })} /></div></div>)}
+          {!isLoadingLyric && rows.map((row, index) => <div className={`diff-row ${row.kind}`} key={row.id}><div className="line-number">{String(index + 1).padStart(2, '0')}</div><div className="diff-cell local"><span>{row.localText || '—'}</span></div><div className="diff-cell reference">{row.referenceText ? <div className="reference-lines">{splitReferenceLines(row.referenceText).map((lineText, lineIndex) => { const lineKey = `${row.id}-${lineIndex}`; return <div className="reference-line" key={lineKey}><span>{lineText}</span><button className="copy-reference" onClick={() => copyReference(row, lineText, lineIndex)} aria-label={`复制第 ${index + 1} 行网易云歌词的第 ${lineIndex + 1} 句`}>{copiedLineKey === lineKey ? '已复制' : '复制'}</button></div>; })}</div> : <span>—</span>}</div><div className="row-controls"><button onClick={() => chooseRow(row, 'local')} className={row.chosenText === row.localText ? 'active' : ''}>现场</button><button onClick={() => chooseRow(row, 'reference')} className={row.chosenText === row.referenceText && Boolean(row.referenceText) ? 'active reference-choice' : ''} disabled={!row.referenceText || row.localIds.length !== 1} title={row.localIds.length > 1 ? '多个 SRT 条目合并显示，参考文本仅用于对比' : undefined}>参考</button><input aria-label={`编辑第 ${index + 1} 行`} value={row.chosenText} disabled={row.localIds.length > 1} onChange={(event) => updateRow(row.id, { chosenText: event.target.value })} /></div></div>)}
         </div>
       </section>
 
