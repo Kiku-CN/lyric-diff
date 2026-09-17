@@ -3,6 +3,7 @@ import { alignSubtitles, type AlignmentRow } from './lib/alignment';
 import type { MatchingAlgorithm } from './lib/matchingAlgorithms';
 import { copyText, splitReferenceLines } from './lib/clipboard';
 import { alignPlaylist, type PlaylistAlignmentRow, type PlaylistTrackReference } from './lib/playlistMatching';
+import { runThrottled } from './lib/requestScheduler';
 import { createExportEntries } from './lib/reviewExport';
 import { exportSrt, exportTxt, parseSubtitle, type SubtitleEntry } from './lib/subtitles';
 import { fetchNeteaseLyric, searchNetease, stripLyricTimestamps, type NeteaseSong } from './server/netease';
@@ -27,13 +28,51 @@ function parsePlaylistQueries(value: string): string[] {
   return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
+type PlaylistMatchPanelProps = {
+  initialValue: string;
+  isMatchingPlaylist: boolean;
+  playlistTracks: PlaylistTrackState[];
+  onDraftChange: (value: string) => void;
+  onSubmit: (value: string) => void;
+  onChooseSong: (trackIndex: number, songId: number) => void;
+};
+
+export function PlaylistMatchPanel({ initialValue, isMatchingPlaylist, playlistTracks, onDraftChange, onSubmit, onChooseSong }: PlaylistMatchPanelProps) {
+  const [playlistDraft, setPlaylistDraft] = useState(initialValue);
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onSubmit(playlistDraft);
+  }
+
+  function handleDraftChange(value: string) {
+    setPlaylistDraft(value);
+    onDraftChange(value);
+  }
+
+  return <>
+    <form className="playlist-form" onSubmit={handleSubmit}>
+      <label className="field-label" htmlFor="playlist">演唱会歌单（每行一首，按演出顺序）</label>
+      <textarea id="playlist" className="playlist-input" value={playlistDraft} onChange={(event) => handleDraftChange(event.target.value)} placeholder="例如：歌名 - 歌手\n下一首歌 - 歌手" />
+      <div className="search-row playlist-submit"><button type="submit" disabled={isMatchingPlaylist}>{isMatchingPlaylist ? '匹配中…' : '按歌单匹配'}</button></div>
+    </form>
+    <div className="playlist-track-list">
+      {playlistTracks.length === 0 && <p className="empty-note">输入歌单后，工具会按顺序搜索每首歌并自动分段。</p>}
+      {playlistTracks.map((track, trackIndex) => <div className="playlist-track" key={track.id}>
+        <div className="playlist-track-heading"><span className="playlist-track-number">{String(trackIndex + 1).padStart(2, '0')}</span><div><strong>{track.query}</strong><small>{track.status === 'loading' ? '正在获取歌词…' : track.status === 'ready' ? `${track.selectedSong?.name ?? track.query} · ${track.selectedSong?.artists ?? ''}` : track.error}</small></div></div>
+        {track.candidates.length > 0 && <select aria-label={`选择第 ${trackIndex + 1} 首歌曲`} value={track.selectedSong?.id ?? ''} disabled={isMatchingPlaylist} onChange={(event) => onChooseSong(trackIndex, Number(event.target.value))}>{track.candidates.map((song) => <option key={song.id} value={song.id}>{song.name} · {song.artists}</option>)}</select>}
+      </div>)}
+    </div>
+  </>;
+}
+
 function App() {
   const [sourceView, setSourceView] = useState<SourceView>('srt');
   const [sourceText, setSourceText] = useState(starterSrt);
   const [draftSourceText, setDraftSourceText] = useState(starterSrt);
   const [fileName, setFileName] = useState('未命名现场歌词.srt');
   const [entries, setEntries] = useState<SubtitleEntry[]>(() => parseSubtitle(starterSrt, 'srt'));
-  const [playlist, setPlaylist] = useState('');
+  const playlistDraftRef = useRef('');
   const [query, setQuery] = useState('');
   const [matchMode, setMatchMode] = useState<MatchMode>('single');
   const [songs, setSongs] = useState<NeteaseSong[]>([]);
@@ -238,10 +277,9 @@ function App() {
     }
   }
 
-  async function handlePlaylistSearch(event: FormEvent) {
-    event.preventDefault();
+  async function handlePlaylistSearch(playlistText: string) {
     if (matchMode !== 'playlist') return;
-    const queries = parsePlaylistQueries(playlist);
+    const queries = parsePlaylistQueries(playlistText);
     if (queries.length === 0) {
       setPlaylistTracks([]);
       setRows([]);
@@ -269,7 +307,7 @@ function App() {
     setIsSearching(false);
     setError('');
 
-    const searchedTracks = await Promise.all(initialTracks.map(async (track) => {
+    const searchedTracks = await runThrottled(initialTracks, async (track) => {
       try {
         const candidates = await searchNetease(track.query);
         const selected = candidates[0] ?? null;
@@ -287,11 +325,11 @@ function App() {
           error: cause instanceof Error ? cause.message : '搜索失败',
         };
       }
-    }));
+    });
     if (requestId !== lyricRequestId.current) return;
     setPlaylistTracks(searchedTracks);
 
-    const loadedTracks = await Promise.all(searchedTracks.map(async (track) => {
+    const loadedTracks = await runThrottled(searchedTracks, async (track) => {
       if (!track.selectedSong) return track;
       try {
         const lyric = await fetchNeteaseLyric(track.selectedSong.id);
@@ -302,7 +340,7 @@ function App() {
       } catch (cause) {
         return { ...track, status: 'error' as const, error: cause instanceof Error ? cause.message : '歌词获取失败' };
       }
-    }));
+    });
     if (requestId !== lyricRequestId.current) return;
     setPlaylistTracks(loadedTracks);
     applyPlaylistAlignment(loadedTracks);
@@ -488,20 +526,7 @@ function App() {
               {songs.length === 0 && <p className="empty-note">搜索结果会显示在这里。没有网络时仍可先整理现场文本。</p>}
               {songs.map((song) => <button type="button" className={`candidate ${selectedSong?.id === song.id ? 'chosen' : ''}`} key={song.id} onClick={() => chooseSong(song)}><span><strong>{song.name}</strong><small>{song.artists} · {song.album}</small></span><span aria-hidden="true">{selectedSong?.id === song.id ? '✓' : '→'}</span></button>)}
             </div>
-          </> : <>
-            <form className="playlist-form" onSubmit={handlePlaylistSearch}>
-              <label className="field-label" htmlFor="playlist">演唱会歌单（每行一首，按演出顺序）</label>
-              <textarea id="playlist" className="playlist-input" value={playlist} onChange={(event) => setPlaylist(event.target.value)} placeholder="例如：歌名 - 歌手\n下一首歌 - 歌手" />
-              <div className="search-row playlist-submit"><button type="submit" disabled={isMatchingPlaylist}>{isMatchingPlaylist ? '匹配中…' : '按歌单匹配'}</button></div>
-            </form>
-            <div className="playlist-track-list">
-              {playlistTracks.length === 0 && <p className="empty-note">输入歌单后，工具会按顺序搜索每首歌并自动分段。</p>}
-              {playlistTracks.map((track, trackIndex) => <div className="playlist-track" key={track.id}>
-                <div className="playlist-track-heading"><span className="playlist-track-number">{String(trackIndex + 1).padStart(2, '0')}</span><div><strong>{track.query}</strong><small>{track.status === 'loading' ? '正在获取歌词…' : track.status === 'ready' ? `${track.selectedSong?.name ?? track.query} · ${track.selectedSong?.artists ?? ''}` : track.error}</small></div></div>
-                {track.candidates.length > 0 && <select aria-label={`选择第 ${trackIndex + 1} 首歌曲`} value={track.selectedSong?.id ?? ''} disabled={isMatchingPlaylist} onChange={(event) => choosePlaylistSong(trackIndex, Number(event.target.value))}>{track.candidates.map((song) => <option key={song.id} value={song.id}>{song.name} · {song.artists}</option>)}</select>}
-              </div>)}
-            </div>
-          </>}
+          </> : <PlaylistMatchPanel initialValue={playlistDraftRef.current} isMatchingPlaylist={isMatchingPlaylist} playlistTracks={playlistTracks} onDraftChange={(value) => { playlistDraftRef.current = value; }} onSubmit={handlePlaylistSearch} onChooseSong={choosePlaylistSong} />}
         </div>
       </section>
 

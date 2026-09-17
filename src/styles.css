@@ -23,6 +23,7 @@ h2 { max-width: 680px; margin: 11px 0 12px; font-size: clamp(30px, 4vw, 52px); l
 .workflow-active { color: #1d2421; }
 .workspace-grid { display: grid; grid-template-columns: 1.08fr .92fr; gap: 16px; }
 .panel { background: #fffefa; border: 1px solid #deded5; padding: 24px; }
+.match-panel { width: 100%; max-width: 640px; min-width: 0; justify-self: end; }
 .panel-heading { justify-content: space-between; gap: 12px; align-items: start; }
 h3 { margin: 7px 0 0; font-size: 18px; letter-spacing: -.035em; }
 .upload-button, .primary-action, .search-row button { border: 0; background: #1d2421; color: #fffefa; padding: 10px 15px; font-weight: 700; font-size: 12px; }

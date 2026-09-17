@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import App from '../src/App';
+import App, { PlaylistMatchPanel } from '../src/App';
 import { fetchNeteaseLyric, searchNetease } from '../src/server/netease';
 
 vi.mock('../src/server/netease', () => ({
@@ -22,6 +22,7 @@ describe('playlist mode controls', () => {
 
   beforeEach(() => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    vi.useFakeTimers();
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
@@ -37,7 +38,20 @@ describe('playlist mode controls', () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+    vi.useRealTimers();
     vi.clearAllMocks();
+  });
+
+  it('keeps playlist typing local until the form is submitted', async () => {
+    const onSubmit = vi.fn();
+    await act(async () => root.render(<PlaylistMatchPanel initialValue="" isMatchingPlaylist={false} playlistTracks={[]} onDraftChange={vi.fn()} onSubmit={onSubmit} onChooseSong={vi.fn()} />));
+
+    await act(async () => setInputValue(container.querySelector<HTMLTextAreaElement>('#playlist')!, '歌A\n歌B'));
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    await act(async () => container.querySelector<HTMLFormElement>('form.playlist-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+
+    expect(onSubmit).toHaveBeenCalledWith('歌A\n歌B');
   });
 
   it('searches and fetches every playlist item in order', async () => {
@@ -48,6 +62,7 @@ describe('playlist mode controls', () => {
     await act(async () => container.querySelector<HTMLButtonElement>('button[role="tab"][aria-label="歌单模式"]')!.click());
     await act(async () => setInputValue(container.querySelector<HTMLTextAreaElement>('#playlist')!, '歌A\n歌B'));
     await act(async () => container.querySelector<HTMLFormElement>('form.playlist-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await act(async () => { await vi.runAllTimersAsync(); });
 
     expect(vi.mocked(searchNetease).mock.calls.map(([query]) => query)).toEqual(['歌A', '歌B']);
     expect(vi.mocked(fetchNeteaseLyric).mock.calls.map(([id]) => id)).toEqual([101, 202]);
@@ -76,6 +91,7 @@ describe('playlist mode controls', () => {
     await act(async () => container.querySelector<HTMLButtonElement>('button[role="tab"][aria-label="歌单模式"]')!.click());
     await act(async () => setInputValue(container.querySelector<HTMLTextAreaElement>('#playlist')!, '歌A\n失败歌'));
     await act(async () => container.querySelector<HTMLFormElement>('form.playlist-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await act(async () => { await vi.runAllTimersAsync(); });
 
     expect(vi.mocked(fetchNeteaseLyric)).toHaveBeenCalledWith(101);
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('1 首歌曲未能获取歌词');

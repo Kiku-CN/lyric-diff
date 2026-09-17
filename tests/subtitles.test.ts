@@ -31,4 +31,10 @@ describe('subtitle parsing', () => {
       'srt',
     )).toThrow('格式错误');
   });
+
+  it('keeps a timed entry when its subtitle text is empty', () => {
+    expect(parseSubtitle('1\n00:00:01,000 --> 00:00:02,000', 'srt')).toEqual([
+      { id: '1', index: 1, startMs: 1000, endMs: 2000, text: '' },
+    ]);
+  });
 });

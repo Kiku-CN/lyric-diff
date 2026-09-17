@@ -33,7 +33,7 @@ export function parseSubtitle(input: string, extension: 'srt' | 'txt'): Subtitle
   return blocks.flatMap((block, blockIndex) => {
     const lines = block.split(/\r?\n/).map((line) => line.trimEnd());
     if (lines.every((line) => !line.trim())) return [];
-    if (lines.length < 3) throw new Error(`第 ${blockIndex + 1} 段格式错误`);
+    if (lines.length < 2) throw new Error(`第 ${blockIndex + 1} 段格式错误`);
     const indexLine = lines[0].trim();
     const timingLine = lines[1].trim();
     const timing = timingLine.match(timePattern);
@@ -41,7 +41,6 @@ export function parseSubtitle(input: string, extension: 'srt' | 'txt'): Subtitle
     if (!/^\d+$/.test(indexLine)) throw new Error(`第 ${blockIndex + 1} 段序号格式错误`);
     const index = Number(indexLine);
     const text = lines.slice(2).join('\n').trim();
-    if (!text) throw new Error(`第 ${blockIndex + 1} 段字幕内容为空`);
     return [{ id: String(index), index, startMs: toMs(timingLine.slice(0, 12)), endMs: toMs(timingLine.slice(17)), text }];
   });
 }
