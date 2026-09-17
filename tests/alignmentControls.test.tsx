@@ -2,7 +2,19 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../src/App';
+import { splitReferenceLines } from '../src/lib/clipboard';
+import { createExportEntries } from '../src/lib/reviewExport';
 import { fetchNeteaseLyric, searchNetease } from '../src/server/netease';
+
+vi.mock('../src/lib/clipboard', async () => {
+  const actual = await vi.importActual<typeof import('../src/lib/clipboard')>('../src/lib/clipboard');
+  return { ...actual, splitReferenceLines: vi.fn(actual.splitReferenceLines) };
+});
+
+vi.mock('../src/lib/reviewExport', async () => {
+  const actual = await vi.importActual<typeof import('../src/lib/reviewExport')>('../src/lib/reviewExport');
+  return { ...actual, createExportEntries: vi.fn(actual.createExportEntries) };
+});
 
 vi.mock('../src/server/netease', () => ({
   searchNetease: vi.fn(),
@@ -115,6 +127,48 @@ describe('alignment controls', () => {
       checkboxes()[5].click();
     });
     expect(checkboxes().map((checkbox) => checkbox.checked)).toEqual([true, false, true, true, true, true]);
+  });
+
+  it('only rerenders the review row being edited or toggled', async () => {
+    vi.mocked(fetchNeteaseLyric).mockResolvedValue('把酒倒满\n朋友一生一起走\n那些日子不再有');
+    await act(async () => root.render(<App />));
+    await act(async () => {
+      container.querySelector<HTMLFormElement>('form.search-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await act(async () => container.querySelector<HTMLButtonElement>('.candidate')!.click());
+
+    vi.mocked(splitReferenceLines).mockClear();
+    const edit = container.querySelector<HTMLInputElement>('.diff-row .row-controls > input')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(edit, '现场修订');
+      edit.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(vi.mocked(splitReferenceLines)).toHaveBeenCalledTimes(1);
+
+    vi.mocked(splitReferenceLines).mockClear();
+    await act(async () => container.querySelector<HTMLInputElement>('.diff-row input[type="checkbox"]')!.click());
+    expect(vi.mocked(splitReferenceLines)).toHaveBeenCalledTimes(1);
+  });
+
+  it('defers export generation until preview or download is requested', async () => {
+    vi.mocked(fetchNeteaseLyric).mockResolvedValue('把酒倒满\n朋友一生一起走\n那些日子不再有');
+    await act(async () => root.render(<App />));
+    await act(async () => {
+      container.querySelector<HTMLFormElement>('form.search-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await act(async () => container.querySelector<HTMLButtonElement>('.candidate')!.click());
+
+    vi.mocked(createExportEntries).mockClear();
+    const edit = container.querySelector<HTMLInputElement>('.diff-row .row-controls > input')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(edit, '现场修订');
+      edit.dispatchEvent(new Event('input', { bubbles: true }));
+      container.querySelector<HTMLInputElement>('.diff-row:nth-child(2) input[type="checkbox"]')!.click();
+    });
+    expect(vi.mocked(createExportEntries)).not.toHaveBeenCalled();
+
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="预览校对稿"]')!.click());
+    expect(vi.mocked(createExportEntries)).toHaveBeenCalledTimes(1);
   });
 
   it('previews the selected TXT export with current edits and excluded rows', async () => {

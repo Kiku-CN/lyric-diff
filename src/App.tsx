@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent as ReactDragEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent as ReactDragEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { alignSubtitles, type AlignmentRow } from './lib/alignment';
 import type { MatchingAlgorithm } from './lib/matchingAlgorithms';
 import { copyText, splitReferenceLines } from './lib/clipboard';
@@ -66,6 +66,34 @@ export function PlaylistMatchPanel({ initialValue, isMatchingPlaylist, playlistT
   </>;
 }
 
+type ReviewRowProps = {
+  row: PlaylistAlignmentRow;
+  index: number;
+  showTrackHeading: boolean;
+  track?: PlaylistTrackState;
+  copiedLineKey: string | null;
+  onChooseRow: (row: AlignmentRow, choice: 'local' | 'reference') => void;
+  onUpdateRow: (id: string, patch: Partial<AlignmentRow>) => void;
+  onCopyReference: (row: AlignmentRow, lineText: string, lineIndex: number) => void;
+};
+
+const ReviewRow = memo(function ReviewRow({ row, index, showTrackHeading, track, copiedLineKey, onChooseRow, onUpdateRow, onCopyReference }: ReviewRowProps) {
+  return <Fragment>
+    {showTrackHeading && <div className="playlist-section-heading"><span>{String((row.trackIndex ?? 0) + 1).padStart(2, '0')}</span><strong>{track?.selectedSong?.name ?? track?.query ?? '歌单歌曲'}</strong><small>{track?.selectedSong?.artists}</small></div>}
+    <div className={`diff-row ${row.kind}`}>
+      <div className="line-number">{String(index + 1).padStart(2, '0')}</div>
+      <div className="diff-cell local"><span>{row.localText || '—'}</span></div>
+      <div className="diff-cell reference">{row.referenceText ? <div className="reference-lines">{splitReferenceLines(row.referenceText).map((lineText, lineIndex) => { const lineKey = `${row.id}-${lineIndex}`; return <div className="reference-line" key={lineKey}><span>{lineText}</span><button type="button" className="copy-reference" onClick={() => onCopyReference(row, lineText, lineIndex)} aria-label={`复制第 ${index + 1} 行网易云歌词的第 ${lineIndex + 1} 句`}>{copiedLineKey === lineKey ? '已复制' : '复制'}</button></div>; })}</div> : <span>—</span>}</div>
+      <div className="row-controls">
+        <button type="button" onClick={() => onChooseRow(row, 'local')} className={row.chosenText === row.localText ? 'active' : ''} disabled={row.kind === 'add'}>现场</button>
+        <button type="button" onClick={() => onChooseRow(row, 'reference')} className={row.chosenText === row.referenceText && Boolean(row.referenceText) ? 'active reference-choice' : ''} disabled={!row.referenceText || row.localIds.length > 1} title={row.localIds.length > 1 ? '多个 SRT 条目合并显示，参考文本仅用于对比' : undefined}>参考</button>
+        <input aria-label={`编辑第 ${index + 1} 行`} value={row.chosenText} disabled={row.localIds.length > 1} onChange={(event) => onUpdateRow(row.id, { chosenText: event.target.value })} />
+        <label className="export-toggle"><input type="checkbox" aria-label={`导出第 ${index + 1} 行`} checked={row.includeInExport} onChange={(event) => onUpdateRow(row.id, { includeInExport: event.target.checked })} />导出</label>
+      </div>
+    </div>
+  </Fragment>;
+});
+
 function App() {
   const [sourceView, setSourceView] = useState<SourceView>('srt');
   const [sourceText, setSourceText] = useState(starterSrt);
@@ -101,10 +129,11 @@ function App() {
     stats[row.kind] += 1;
     return stats;
   }, { equal: 0, change: 0, add: 0, remove: 0 } as Record<AlignmentRow['kind'], number>), [rows]);
-  const exportText = useMemo(() => {
+  function buildExportText() {
     const output = createExportEntries(entries, rows, exportKind);
     return exportKind === 'srt' ? exportSrt(output) : exportTxt(output);
-  }, [entries, rows, exportKind]);
+  }
+  const previewText = previewOpen ? buildExportText() : '';
   const parsedTxt = useMemo(() => exportTxt(entries), [entries]);
   const hasDraftChanges = draftSourceText !== sourceText;
 
@@ -430,15 +459,15 @@ function App() {
     }
   }
 
-  function updateRow(id: string, patch: Partial<AlignmentRow>) {
+  const updateRow = useCallback((id: string, patch: Partial<AlignmentRow>) => {
     setRows((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row));
-  }
+  }, []);
 
-  function chooseRow(row: AlignmentRow, choice: 'local' | 'reference') {
+  const chooseRow = useCallback((row: AlignmentRow, choice: 'local' | 'reference') => {
     updateRow(row.id, { chosenText: choice === 'reference' ? row.referenceText : row.localText });
-  }
+  }, [updateRow]);
 
-  async function copyReference(row: AlignmentRow, lineText: string, lineIndex: number) {
+  const copyReference = useCallback(async (row: AlignmentRow, lineText: string, lineIndex: number) => {
     if (!lineText) return;
     const lineKey = `${row.id}-${lineIndex}`;
     try {
@@ -448,10 +477,10 @@ function App() {
     } catch {
       setError('无法写入剪贴板，请检查浏览器权限');
     }
-  }
+  }, []);
 
   function download() {
-    const blob = new Blob([exportText], { type: 'text/plain;charset=utf-8' });
+    const blob = new Blob([buildExportText()], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
@@ -550,13 +579,13 @@ function App() {
             const previousTrackIndex = index > 0 ? rows[index - 1].trackIndex : undefined;
             const showTrackHeading = matchMode === 'playlist' && row.trackIndex !== undefined && row.trackIndex !== previousTrackIndex;
             const track = row.trackIndex === undefined ? undefined : playlistTracks[row.trackIndex];
-            return <Fragment key={row.id}>{showTrackHeading && <div className="playlist-section-heading"><span>{String((row.trackIndex ?? 0) + 1).padStart(2, '0')}</span><strong>{track?.selectedSong?.name ?? track?.query ?? '歌单歌曲'}</strong><small>{track?.selectedSong?.artists}</small></div>}<div className={`diff-row ${row.kind}`}><div className="line-number">{String(index + 1).padStart(2, '0')}</div><div className="diff-cell local"><span>{row.localText || '—'}</span></div><div className="diff-cell reference">{row.referenceText ? <div className="reference-lines">{splitReferenceLines(row.referenceText).map((lineText, lineIndex) => { const lineKey = `${row.id}-${lineIndex}`; return <div className="reference-line" key={lineKey}><span>{lineText}</span><button type="button" className="copy-reference" onClick={() => copyReference(row, lineText, lineIndex)} aria-label={`复制第 ${index + 1} 行网易云歌词的第 ${lineIndex + 1} 句`}>{copiedLineKey === lineKey ? '已复制' : '复制'}</button></div>; })}</div> : <span>—</span>}</div><div className="row-controls"><button type="button" onClick={() => chooseRow(row, 'local')} className={row.chosenText === row.localText ? 'active' : ''} disabled={row.kind === 'add'}>现场</button><button type="button" onClick={() => chooseRow(row, 'reference')} className={row.chosenText === row.referenceText && Boolean(row.referenceText) ? 'active reference-choice' : ''} disabled={!row.referenceText || row.localIds.length > 1} title={row.localIds.length > 1 ? '多个 SRT 条目合并显示，参考文本仅用于对比' : undefined}>参考</button><input aria-label={`编辑第 ${index + 1} 行`} value={row.chosenText} disabled={row.localIds.length > 1} onChange={(event) => updateRow(row.id, { chosenText: event.target.value })} /><label className="export-toggle"><input type="checkbox" aria-label={`导出第 ${index + 1} 行`} checked={row.includeInExport} onChange={(event) => updateRow(row.id, { includeInExport: event.target.checked })} />导出</label></div></div></Fragment>;
+            return <ReviewRow key={row.id} row={row} index={index} showTrackHeading={showTrackHeading} track={track} copiedLineKey={copiedLineKey} onChooseRow={chooseRow} onUpdateRow={updateRow} onCopyReference={copyReference} />;
           })}
         </div>
       </section>
 
       <footer className="footer-note"><span>原始字幕不会被覆盖</span><span>·</span><span>网易云歌词仅作为参考</span><span>·</span><span>所有行按勾选结果导出</span></footer>
-      {previewOpen && <div className="preview-overlay" onClick={(event) => { if (event.target === event.currentTarget) setPreviewOpen(false); }}><section className="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title"><div className="preview-heading"><div><h3 id="preview-title">导出预览</h3><span>{exportKind.toUpperCase()}</span></div><button ref={previewCloseRef} type="button" onClick={() => setPreviewOpen(false)} aria-label="关闭预览">关闭</button></div>{exportText.trim() ? <pre className="preview-content">{exportText}</pre> : <p className="preview-empty">没有可导出的字幕</p>}</section></div>}
+      {previewOpen && <div className="preview-overlay" onClick={(event) => { if (event.target === event.currentTarget) setPreviewOpen(false); }}><section className="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title"><div className="preview-heading"><div><h3 id="preview-title">导出预览</h3><span>{exportKind.toUpperCase()}</span></div><button ref={previewCloseRef} type="button" onClick={() => setPreviewOpen(false)} aria-label="关闭预览">关闭</button></div>{previewText.trim() ? <pre className="preview-content">{previewText}</pre> : <p className="preview-empty">没有可导出的字幕</p>}</section></div>}
     </main>
   );
 }
