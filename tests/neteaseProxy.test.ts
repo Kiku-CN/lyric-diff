@@ -18,4 +18,16 @@ describe('netease proxy upstreams', () => {
       'https://music.163.com/api/search/get/web?s=%E5%8E%9F%E7%82%B9&limit=8&offset=0&type=1',
     );
   });
+
+  it('maps the word-level lyric route to the working official NetEase endpoint', () => {
+    expect(buildNeteaseUpstreamUrls('/lyric/v1', '?id=1824020871', 'https://music.163.com')[0]).toBe(
+      'https://music.163.com/api/song/lyric/v1?id=1824020871&cp=false&lv=0&tv=0&rv=0&kv=0&yv=0&ytv=0&yrv=0',
+    );
+  });
+
+  it('keeps compatibility with NeteaseCloudMusicApi upstreams', () => {
+    expect(buildNeteaseUpstreamUrls('/lyric/v1', '?id=1824020871', 'https://primary.example')[0]).toBe(
+      'https://primary.example/lyric/new?id=1824020871',
+    );
+  });
 });

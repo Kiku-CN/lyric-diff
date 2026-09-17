@@ -7,6 +7,9 @@ const FALLBACK_UPSTREAMS = [
 ];
 
 function toUpstreamUrl(base: string, pathname: string, search: string): string {
+  if (pathname === '/lyric/v1' && base !== 'https://music.163.com') {
+    return `${base}/lyric/new${search}`;
+  }
   if (base === 'https://music.163.com') {
     const params = new URLSearchParams(search);
     if (pathname === '/search') {
@@ -14,6 +17,9 @@ function toUpstreamUrl(base: string, pathname: string, search: string): string {
     }
     if (pathname === '/lyric') {
       return `${base}/api/song/lyric?id=${encodeURIComponent(params.get('id') ?? '')}&lv=1&kv=1&tv=-1`;
+    }
+    if (pathname === '/lyric/v1') {
+      return `${base}/api/song/lyric/v1?id=${encodeURIComponent(params.get('id') ?? '')}&cp=false&lv=0&tv=0&rv=0&kv=0&yv=0&ytv=0&yrv=0`;
     }
   }
   return `${base}${pathname}${search}`;

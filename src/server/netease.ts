@@ -13,7 +13,7 @@ export class NeteaseError extends Error {
 }
 
 type SearchResponse = { result?: { songs?: Array<{ id: number; name: string; artists?: Array<{ name: string }>; album?: { name: string } }> } };
-type LyricResponse = { lrc?: { lyric?: string } };
+type LyricResponse = { lrc?: { lyric?: string }; yrc?: { lyric?: string } };
 
 async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
@@ -40,7 +40,11 @@ export async function searchNetease(query: string): Promise<NeteaseSong[]> {
 export async function fetchNeteaseLyric(songId: number): Promise<string> {
   try {
     const data = await getJson<LyricResponse>(`/api/netease/lyric?id=${songId}`);
-    return data.lrc?.lyric ?? '';
+    const lyric = data.lrc?.lyric;
+    if (lyric?.trim()) return lyric;
+
+    const wordLyric = await getJson<LyricResponse>(`/api/netease/lyric/v1?id=${songId}`);
+    return wordLyric.yrc?.lyric ?? '';
   } catch (error) {
     if (error instanceof NeteaseError) throw error;
     throw new NeteaseError('无法获取这首歌的歌词');
@@ -48,5 +52,8 @@ export async function fetchNeteaseLyric(songId: number): Promise<string> {
 }
 
 export function stripLyricTimestamps(lyric: string): string[] {
-  return lyric.split(/\r?\n/).map((line) => line.replace(/\[[0-9:.]+\]/g, '').trim()).filter(Boolean);
+  return lyric.split(/\r?\n/).filter((line) => !line.trimStart().startsWith('{')).map((line) => line
+    .replace(/\[[0-9:.,]+\]/g, '')
+    .replace(/\(\d+(?:,\d+)+\)/g, '')
+    .trim()).filter(Boolean);
 }
