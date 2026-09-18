@@ -39,6 +39,16 @@ function formatAudioTime(value: number): string {
     : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
+function formatSubtitleTimestamp(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return '';
+  const milliseconds = value % 1_000;
+  const totalSeconds = Math.floor(value / 1_000);
+  const seconds = totalSeconds % 60;
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const hours = Math.floor(totalSeconds / 3_600);
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(milliseconds).padStart(3, '0')}`;
+}
+
 type PlaylistMatchPanelProps = {
   initialValue: string;
   isMatchingPlaylist: boolean;
@@ -83,6 +93,7 @@ type ReviewRowProps = {
   showTrackHeading: boolean;
   track?: PlaylistTrackState;
   copiedLineKey: string | null;
+  timestampMs?: number;
   playbackTimeMs?: number;
   onChooseRow: (row: AlignmentRow, choice: 'local' | 'reference') => void;
   onUpdateRow: (id: string, patch: Partial<AlignmentRow>) => void;
@@ -90,11 +101,11 @@ type ReviewRowProps = {
   onPlayRow: (row: AlignmentRow) => void;
 };
 
-const ReviewRow = memo(function ReviewRow({ row, index, showTrackHeading, track, copiedLineKey, playbackTimeMs, onChooseRow, onUpdateRow, onCopyReference, onPlayRow }: ReviewRowProps) {
+const ReviewRow = memo(function ReviewRow({ row, index, showTrackHeading, track, copiedLineKey, timestampMs, playbackTimeMs, onChooseRow, onUpdateRow, onCopyReference, onPlayRow }: ReviewRowProps) {
   return <Fragment>
     {showTrackHeading && <div className="playlist-section-heading"><span>{String((row.trackIndex ?? 0) + 1).padStart(2, '0')}</span><strong>{track?.selectedSong?.name ?? track?.query ?? '歌单歌曲'}</strong><small>{track?.selectedSong?.artists}</small></div>}
     <div className={`diff-row ${row.kind}`}>
-      <div className="line-number">{String(index + 1).padStart(2, '0')}</div>
+      <div className="line-number" title={timestampMs === undefined ? undefined : formatSubtitleTimestamp(timestampMs)}>{String(index + 1).padStart(2, '0')}</div>
       <div className="diff-cell local"><span>{row.localText || '—'}</span></div>
       <div className="diff-cell reference">{row.referenceText ? <div className="reference-lines">{splitReferenceLines(row.referenceText).map((lineText, lineIndex) => { const lineKey = `${row.id}-${lineIndex}`; return <div className="reference-line" key={lineKey}><span>{lineText}</span><button type="button" className="copy-reference" onClick={() => onCopyReference(row, lineText, lineIndex)} aria-label={`复制第 ${index + 1} 行网易云歌词的第 ${lineIndex + 1} 句`}>{copiedLineKey === lineKey ? '已复制' : '复制'}</button></div>; })}</div> : <span>—</span>}</div>
       <div className="row-controls">
@@ -120,7 +131,7 @@ function App() {
   const [songs, setSongs] = useState<NeteaseSong[]>([]);
   const [selectedSong, setSelectedSong] = useState<NeteaseSong | null>(null);
   const [playlistTracks, setPlaylistTracks] = useState<PlaylistTrackState[]>([]);
-  const [rows, setRows] = useState<PlaylistAlignmentRow[]>([]);
+  const [rows, setRows] = useState<PlaylistAlignmentRow[]>(() => alignSubtitles(parseSubtitle(starterSrt, 'srt'), [], { algorithm: 'fragment', smartSegmentation: true }));
   const [referenceLines, setReferenceLines] = useState<string[]>([]);
   const [matchingAlgorithm, setMatchingAlgorithm] = useState<MatchingAlgorithm>('fragment');
   const [smartSegmentation, setSmartSegmentation] = useState(true);
@@ -209,10 +220,6 @@ function App() {
 
   function resetReviewState() {
     lyricRequestId.current += 1;
-    setRows([]);
-    setReferenceLines([]);
-    setSelectedSong(null);
-    setPlaylistTracks([]);
     setIsLoadingLyric(false);
     setIsMatchingPlaylist(false);
     setIsSearching(false);
@@ -224,7 +231,7 @@ function App() {
     setMatchMode(nextMode);
     setSongs([]);
     setSelectedSong(null);
-    setRows([]);
+    setRows(alignSubtitles(entries, [], matchingSettings.current));
     setReferenceLines([]);
     setIsLoadingLyric(false);
     setIsMatchingPlaylist(false);
@@ -241,15 +248,15 @@ function App() {
     }));
   }
 
-  function applyPlaylistAlignment(tracks: PlaylistTrackState[]) {
+  function applyPlaylistAlignment(tracks: PlaylistTrackState[], local = entries) {
     const references = playlistReferences(tracks);
     const lines = references.flatMap((track) => track.lines);
     setReferenceLines(lines);
     if (lines.length === 0) {
-      setRows([]);
+      setRows(alignSubtitles(local, [], matchingSettings.current));
       return;
     }
-    setRows(alignPlaylist(entries, references, matchingSettings.current));
+    setRows(alignPlaylist(local, references, matchingSettings.current));
   }
 
   function parseSrtSource(text: string): SubtitleEntry[] {
@@ -269,6 +276,11 @@ function App() {
       setSourceView('srt');
       setEntries(parsed);
       resetReviewState();
+      if (matchMode === 'playlist') {
+        applyPlaylistAlignment(playlistTracks, parsed);
+      } else {
+        setRows(alignSubtitles(parsed, referenceLines, matchingSettings.current));
+      }
       setError('');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '无法解析字幕');
@@ -417,7 +429,7 @@ function App() {
     const queries = parsePlaylistQueries(playlistText);
     if (queries.length === 0) {
       setPlaylistTracks([]);
-      setRows([]);
+      setRows(alignSubtitles(entries, [], matchingSettings.current));
       setReferenceLines([]);
       setError('请先输入歌单，每行一首歌曲');
       return;
@@ -498,7 +510,7 @@ function App() {
       setRows(alignSubtitles(entries, lines, matchingSettings.current));
     } catch (cause) {
       if (requestId !== lyricRequestId.current) return;
-      setRows([]);
+      setRows(alignSubtitles(entries, [], matchingSettings.current));
       setReferenceLines([]);
       setError(cause instanceof Error ? cause.message : '歌词获取失败');
     } finally {
@@ -707,7 +719,7 @@ function App() {
           </select>
           <label className="segmentation-toggle" title="切换智能分句会重置逐行修改"><input type="checkbox" aria-label="智能分句" checked={smartSegmentation} onChange={(event) => changeSmartSegmentation(event.target.checked)} />智能分句</label>
         </div>
-        <div className="diff-header"><span>剪映现场版</span><span>网易云参考版</span><span>处理</span></div>
+        <div className="diff-header"><span aria-hidden="true" /><span>剪映现场版</span><span>网易云参考版</span><span>处理</span></div>
         <div className="diff-table">
           {(isLoadingLyric || isMatchingPlaylist) && <div className="loading-state">正在抓取歌词并按歌单顺序对齐…</div>}
           {!isLoadingLyric && !isMatchingPlaylist && rows.length === 0 && <div className="empty-review"><span className="empty-symbol">↔</span><strong>等待参考歌词</strong><p>{matchMode === 'playlist' ? '输入歌单后，工具会按顺序分段并保留现场独有内容。' : '先搜索并选择一首歌曲，工具会保留现场顺序，标出每处不同。'}</p></div>}
@@ -715,7 +727,7 @@ function App() {
             const previousTrackIndex = index > 0 ? rows[index - 1].trackIndex : undefined;
             const showTrackHeading = matchMode === 'playlist' && row.trackIndex !== undefined && row.trackIndex !== previousTrackIndex;
             const track = row.trackIndex === undefined ? undefined : playlistTracks[row.trackIndex];
-            return <ReviewRow key={row.id} row={row} index={index} showTrackHeading={showTrackHeading} track={track} copiedLineKey={copiedLineKey} playbackTimeMs={audioUrl ? rowPlaybackTime(row) : undefined} onChooseRow={chooseRow} onUpdateRow={updateRow} onCopyReference={copyReference} onPlayRow={playRow} />;
+            return <ReviewRow key={row.id} row={row} index={index} showTrackHeading={showTrackHeading} track={track} copiedLineKey={copiedLineKey} timestampMs={rowPlaybackTime(row)} playbackTimeMs={audioUrl ? rowPlaybackTime(row) : undefined} onChooseRow={chooseRow} onUpdateRow={updateRow} onCopyReference={copyReference} onPlayRow={playRow} />;
           })}
         </div>
       </section>
