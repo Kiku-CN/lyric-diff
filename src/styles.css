@@ -135,7 +135,9 @@ textarea:focus, input:focus, select:focus { border-color: #8d9c92; box-shadow: 0
 .reference-line { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; min-height: 18px; }
 .row-controls { display: grid; grid-template-columns: auto auto auto minmax(0, 1fr) auto; align-items: center; gap: 5px; padding: 8px 0 8px 10px; border-left: 1px solid #e1e2db; }
 .row-controls button { border: 1px solid #d4d8cf; background: #fffefa; color: #778078; padding: 6px 7px; font-size: 10px; }.row-controls button.active { background: #1d2421; border-color: #1d2421; color: #fffefa; }.row-controls button.reference-choice { background: #28795f; border-color: #28795f; }.row-controls button:disabled { opacity: .4; cursor: not-allowed; }
+.row-controls .row-playback { width: 48px; min-width: 48px; white-space: nowrap; }
 .row-controls .row-playback:not(:disabled) { border-color: #c8d6cd; color: #28795f; }
+.row-controls .row-playback.playing { border-color: #28795f; background: #28795f; color: #fffefa; box-shadow: 0 0 0 2px #dceee4; }
 .row-controls input { min-width: 0; width: 100%; padding: 6px 7px; font: 11px "DM Mono", monospace; }
 .row-controls input:disabled { opacity: .62; cursor: not-allowed; }
 .row-controls .export-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 0 5px; color: #28795f; font-size: 10px; white-space: nowrap; cursor: pointer; }

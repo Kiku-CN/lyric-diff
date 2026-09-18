@@ -127,4 +127,39 @@ describe('audio player', () => {
     expect(audio.currentTime).toBe(1);
     expect(HTMLMediaElement.prototype.play).toHaveBeenCalled();
   });
+
+  it('shows the active state on the row currently being played', async () => {
+    vi.mocked(searchNetease).mockResolvedValue([{ id: 17, name: '现场曲', artists: '歌手', album: '专辑' }]);
+    vi.mocked(fetchNeteaseLyric).mockResolvedValue('把酒倒满\n朋友一生一起走\n那些日子不再有');
+    await act(async () => root.render(<App />));
+    await act(async () => selectFile(container.querySelector<HTMLInputElement>('input.audio-file-input')!, createAudioFile()));
+    await act(async () => container.querySelector<HTMLFormElement>('form.search-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await act(async () => container.querySelector<HTMLButtonElement>('.candidate')!.click());
+
+    const rowButton = container.querySelector<HTMLButtonElement>('.row-playback')!;
+    expect(rowButton.classList.contains('playing')).toBe(false);
+    await act(async () => rowButton.click());
+    expect(rowButton.classList.contains('playing')).toBe(true);
+    expect(rowButton.textContent).toContain('播放中');
+    expect(rowButton.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('pauses row playback at the row end timestamp', async () => {
+    vi.mocked(searchNetease).mockResolvedValue([{ id: 17, name: '现场曲', artists: '歌手', album: '专辑' }]);
+    vi.mocked(fetchNeteaseLyric).mockResolvedValue('把酒倒满\n朋友一生一起走\n那些日子不再有');
+    await act(async () => root.render(<App />));
+    await act(async () => selectFile(container.querySelector<HTMLInputElement>('input.audio-file-input')!, createAudioFile()));
+    await act(async () => container.querySelector<HTMLFormElement>('form.search-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await act(async () => container.querySelector<HTMLButtonElement>('.candidate')!.click());
+
+    const audio = container.querySelector<HTMLAudioElement>('.audio-engine')!;
+    await act(async () => container.querySelector<HTMLButtonElement>('.row-playback')!.click());
+    vi.mocked(HTMLMediaElement.prototype.pause).mockClear();
+    audio.currentTime = 2.5;
+    await act(async () => audio.dispatchEvent(new Event('timeupdate', { bubbles: true })));
+    expect(HTMLMediaElement.prototype.pause).not.toHaveBeenCalled();
+    audio.currentTime = 3;
+    await act(async () => audio.dispatchEvent(new Event('timeupdate', { bubbles: true })));
+    expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(1);
+  });
 });
