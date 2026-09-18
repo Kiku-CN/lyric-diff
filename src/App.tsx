@@ -28,6 +28,17 @@ function parsePlaylistQueries(value: string): string[] {
   return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
+function formatAudioTime(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return '00:00';
+  const totalSeconds = Math.floor(value);
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  return hours > 0
+    ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+    : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
 type PlaylistMatchPanelProps = {
   initialValue: string;
   isMatchingPlaylist: boolean;
@@ -72,12 +83,14 @@ type ReviewRowProps = {
   showTrackHeading: boolean;
   track?: PlaylistTrackState;
   copiedLineKey: string | null;
+  playbackTimeMs?: number;
   onChooseRow: (row: AlignmentRow, choice: 'local' | 'reference') => void;
   onUpdateRow: (id: string, patch: Partial<AlignmentRow>) => void;
   onCopyReference: (row: AlignmentRow, lineText: string, lineIndex: number) => void;
+  onPlayRow: (row: AlignmentRow) => void;
 };
 
-const ReviewRow = memo(function ReviewRow({ row, index, showTrackHeading, track, copiedLineKey, onChooseRow, onUpdateRow, onCopyReference }: ReviewRowProps) {
+const ReviewRow = memo(function ReviewRow({ row, index, showTrackHeading, track, copiedLineKey, playbackTimeMs, onChooseRow, onUpdateRow, onCopyReference, onPlayRow }: ReviewRowProps) {
   return <Fragment>
     {showTrackHeading && <div className="playlist-section-heading"><span>{String((row.trackIndex ?? 0) + 1).padStart(2, '0')}</span><strong>{track?.selectedSong?.name ?? track?.query ?? '歌单歌曲'}</strong><small>{track?.selectedSong?.artists}</small></div>}
     <div className={`diff-row ${row.kind}`}>
@@ -85,6 +98,7 @@ const ReviewRow = memo(function ReviewRow({ row, index, showTrackHeading, track,
       <div className="diff-cell local"><span>{row.localText || '—'}</span></div>
       <div className="diff-cell reference">{row.referenceText ? <div className="reference-lines">{splitReferenceLines(row.referenceText).map((lineText, lineIndex) => { const lineKey = `${row.id}-${lineIndex}`; return <div className="reference-line" key={lineKey}><span>{lineText}</span><button type="button" className="copy-reference" onClick={() => onCopyReference(row, lineText, lineIndex)} aria-label={`复制第 ${index + 1} 行网易云歌词的第 ${lineIndex + 1} 句`}>{copiedLineKey === lineKey ? '已复制' : '复制'}</button></div>; })}</div> : <span>—</span>}</div>
       <div className="row-controls">
+        <button type="button" className="row-playback" onClick={() => onPlayRow(row)} disabled={playbackTimeMs === undefined} aria-label={playbackTimeMs === undefined ? `第 ${index + 1} 行没有可播放时间轴` : `播放第 ${index + 1} 行`} title={playbackTimeMs === undefined ? '该行没有本地字幕时间轴' : `从 ${formatAudioTime(playbackTimeMs / 1000)} 播放`}>播放</button>
         <button type="button" onClick={() => onChooseRow(row, 'local')} className={row.chosenText === row.localText ? 'active' : ''} disabled={row.kind === 'add'}>现场</button>
         <button type="button" onClick={() => onChooseRow(row, 'reference')} className={row.chosenText === row.referenceText && Boolean(row.referenceText) ? 'active reference-choice' : ''} disabled={!row.referenceText || row.localIds.length > 1} title={row.localIds.length > 1 ? '多个 SRT 条目合并显示，参考文本仅用于对比' : undefined}>参考</button>
         <input aria-label={`编辑第 ${index + 1} 行`} value={row.chosenText} disabled={row.localIds.length > 1} onChange={(event) => onUpdateRow(row.id, { chosenText: event.target.value })} />
@@ -122,6 +136,14 @@ function App() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const previewCloseRef = useRef<HTMLButtonElement>(null);
   const sourceFileInputRef = useRef<HTMLInputElement>(null);
+  const audioFileInputRef = useRef<HTMLInputElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioName, setAudioName] = useState('');
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [audioVolume, setAudioVolume] = useState(1);
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [copiedLineKey, setCopiedLineKey] = useState<string | null>(null);
 
   const hasTimeline = entries.some((entry) => entry.startMs !== undefined);
@@ -136,6 +158,36 @@ function App() {
   const previewText = previewOpen ? buildExportText() : '';
   const parsedTxt = useMemo(() => exportTxt(entries), [entries]);
   const hasDraftChanges = draftSourceText !== sourceText;
+
+  useEffect(() => {
+    return () => {
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+    };
+  }, [audioUrl]);
+
+  useEffect(() => {
+    if (!audioUrl) return;
+    function handleAudioKeydown(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target;
+      if (target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLInputElement && target.type !== 'checkbox') || (target instanceof HTMLElement && target.isContentEditable)) return;
+      if (event.key === ' ') {
+        event.preventDefault();
+        if (target instanceof HTMLButtonElement || target instanceof HTMLInputElement) target.blur();
+        toggleAudioPlayback();
+      } else if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        if (target instanceof HTMLButtonElement || target instanceof HTMLInputElement) target.blur();
+        stepAudio(-5);
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        if (target instanceof HTMLButtonElement || target instanceof HTMLInputElement) target.blur();
+        stepAudio(5);
+      }
+    }
+    document.addEventListener('keydown', handleAudioKeydown);
+    return () => document.removeEventListener('keydown', handleAudioKeydown);
+  }, [audioUrl]);
 
   useEffect(() => {
     if (!previewOpen) return;
@@ -260,10 +312,29 @@ function App() {
     }
   }
 
+  function loadAudioFile(file: File) {
+    if (!file.type.startsWith('audio/') && !/\.(aac|flac|m4a|mp3|ogg|wav|webm)$/i.test(file.name)) {
+      setError('仅支持音频文件导入');
+      return;
+    }
+    setAudioUrl(URL.createObjectURL(file));
+    setAudioName(file.name);
+    setAudioCurrentTime(0);
+    setAudioDuration(0);
+    setIsAudioPlaying(false);
+    setError('');
+  }
+
   async function onFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
     await loadSourceFile(file);
+    event.target.value = '';
+  }
+
+  function onAudioFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (file) loadAudioFile(file);
     event.target.value = '';
   }
 
@@ -281,7 +352,42 @@ function App() {
     event.preventDefault();
     setIsDragging(false);
     const file = event.dataTransfer.files?.[0];
-    if (file) await loadSourceFile(file);
+    if (!file) return;
+    if (file.type.startsWith('audio/') || /\.(aac|flac|m4a|mp3|ogg|wav|webm)$/i.test(file.name)) loadAudioFile(file);
+    else await loadSourceFile(file);
+  }
+
+  function toggleAudioPlayback() {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) {
+      const result = audio.play();
+      result?.catch(() => setError('无法播放音频，请检查文件格式或浏览器权限'));
+    } else {
+      audio.pause();
+    }
+  }
+
+  function stepAudio(seconds: number) {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const maxTime = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : Number.POSITIVE_INFINITY;
+    const nextTime = Math.min(maxTime, Math.max(0, audio.currentTime + seconds));
+    audio.currentTime = nextTime;
+    setAudioCurrentTime(nextTime);
+  }
+
+  function seekAudio(value: number) {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.currentTime = value;
+    setAudioCurrentTime(value);
+  }
+
+  function changeAudioVolume(value: number) {
+    const audio = audioRef.current;
+    if (audio) audio.volume = value;
+    setAudioVolume(value);
   }
 
   async function handleSearch(event: FormEvent) {
@@ -479,6 +585,21 @@ function App() {
     }
   }, []);
 
+  const playRow = useCallback((row: AlignmentRow) => {
+    const entry = entries.find((item) => item.id === row.localIds[0]);
+    const audio = audioRef.current;
+    if (!entry || entry.startMs === undefined || !audio) return;
+    audio.currentTime = entry.startMs / 1000;
+    setAudioCurrentTime(audio.currentTime);
+    const result = audio.play();
+    result?.catch(() => setError('无法播放音频，请检查文件格式或浏览器权限'));
+  }, [entries]);
+
+  const rowPlaybackTime = useCallback((row: AlignmentRow) => {
+    const entry = entries.find((item) => item.id === row.localIds[0]);
+    return entry?.startMs;
+  }, [entries]);
+
   function download() {
     const blob = new Blob([buildExportText()], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -490,7 +611,7 @@ function App() {
   }
 
   return (
-    <main className="shell">
+    <main className={`shell ${audioUrl ? 'has-audio' : ''}`}>
       <header className="topbar">
         <div className="brand-lockup">
           <span className="brand-mark" aria-hidden="true">↔</span>
@@ -506,6 +627,21 @@ function App() {
           <span>{fileName}</span>
         </div>
       </header>
+
+      {audioUrl && <div className="audio-player" role="region" aria-label="音频播放器">
+        <audio ref={audioRef} className="audio-engine" src={audioUrl} preload="metadata" onLoadedMetadata={(event) => setAudioDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0)} onTimeUpdate={(event) => setAudioCurrentTime(event.currentTarget.currentTime)} onPlay={() => setIsAudioPlaying(true)} onPause={() => setIsAudioPlaying(false)} onEnded={() => setIsAudioPlaying(false)} />
+        <div className="audio-player-heading"><strong>{audioName}</strong><span>{formatAudioTime(audioCurrentTime)} / {formatAudioTime(audioDuration)}</span></div>
+        <div className="audio-player-controls">
+          <button type="button" className="audio-play-toggle" onClick={toggleAudioPlayback} aria-label={isAudioPlaying ? '暂停音频' : '播放音频'}>{isAudioPlaying ? '暂停' : '播放'}</button>
+          <button type="button" className="audio-step" data-audio-step="-10" onClick={() => stepAudio(-10)} aria-label="后退 10 秒">-10</button>
+          <button type="button" className="audio-step" data-audio-step="-5" onClick={() => stepAudio(-5)} aria-label="后退 5 秒">-5</button>
+          <input className="audio-seek" type="range" min="0" max={audioDuration || 0} step="0.01" value={Math.min(audioCurrentTime, audioDuration || 0)} onChange={(event) => seekAudio(Number(event.target.value))} aria-label="音频进度" disabled={!audioDuration} />
+          <button type="button" className="audio-step" data-audio-step="5" onClick={() => stepAudio(5)} aria-label="前进 5 秒">+5</button>
+          <button type="button" className="audio-step" data-audio-step="10" onClick={() => stepAudio(10)} aria-label="前进 10 秒">+10</button>
+          <label className="audio-volume"><span>音量</span><input type="range" min="0" max="1" step="0.05" value={audioVolume} onChange={(event) => changeAudioVolume(Number(event.target.value))} aria-label="音量" /></label>
+          <button type="button" className="audio-clear" onClick={() => { audioRef.current?.pause(); setAudioUrl(null); setAudioName(''); setAudioCurrentTime(0); setAudioDuration(0); setIsAudioPlaying(false); }} aria-label="移除音频">移除</button>
+        </div>
+      </div>}
 
       <section className="intro-band">
         <div>
@@ -525,7 +661,7 @@ function App() {
           <div className={`source-dropzone ${isDragging ? 'dragging' : ''}`} role="region" aria-label="SRT 文件导入区域">
             <div className="panel-heading">
               <div><p className="section-kicker">现场文本</p><h3>剪映识别结果</h3></div>
-              <><button type="button" className="upload-button" onClick={() => sourceFileInputRef.current?.click()}>选择 SRT</button><input ref={sourceFileInputRef} className="source-file-input" type="file" tabIndex={-1} aria-hidden="true" accept=".srt,application/x-subrip" onChange={onFileChange} /></>
+              <div className="source-upload-actions"><button type="button" className="upload-button" onClick={() => sourceFileInputRef.current?.click()}>选择 SRT</button><input ref={sourceFileInputRef} className="source-file-input" type="file" tabIndex={-1} aria-hidden="true" accept=".srt,application/x-subrip" onChange={onFileChange} /><button type="button" className="audio-upload-button" onClick={() => audioFileInputRef.current?.click()}>选择音频</button><input ref={audioFileInputRef} className="source-file-input audio-file-input" type="file" tabIndex={-1} aria-hidden="true" accept="audio/*" onChange={onAudioFileChange} /></div>
             </div>
             <p className="source-drop-hint">拖动 SRT 文件到这里，或选择文件导入</p>
             <div className="segmented" role="tablist" aria-label="源文本视图">
@@ -579,7 +715,7 @@ function App() {
             const previousTrackIndex = index > 0 ? rows[index - 1].trackIndex : undefined;
             const showTrackHeading = matchMode === 'playlist' && row.trackIndex !== undefined && row.trackIndex !== previousTrackIndex;
             const track = row.trackIndex === undefined ? undefined : playlistTracks[row.trackIndex];
-            return <ReviewRow key={row.id} row={row} index={index} showTrackHeading={showTrackHeading} track={track} copiedLineKey={copiedLineKey} onChooseRow={chooseRow} onUpdateRow={updateRow} onCopyReference={copyReference} />;
+            return <ReviewRow key={row.id} row={row} index={index} showTrackHeading={showTrackHeading} track={track} copiedLineKey={copiedLineKey} playbackTimeMs={audioUrl ? rowPlaybackTime(row) : undefined} onChooseRow={chooseRow} onUpdateRow={updateRow} onCopyReference={copyReference} onPlayRow={playRow} />;
           })}
         </div>
       </section>
