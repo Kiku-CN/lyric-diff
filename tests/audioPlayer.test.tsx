@@ -14,9 +14,19 @@ function createAudioFile() {
   return new File(['audio'], '现场.mp3', { type: 'audio/mpeg' });
 }
 
+function createSrtFile() {
+  return new File(['1\n00:00:01,000 --> 00:00:03,000\n第一句'], '现场.srt', { type: 'application/x-subrip' });
+}
+
 function selectFile(input: HTMLInputElement, file: File) {
   Object.defineProperty(input, 'files', { configurable: true, value: [file] });
   input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function dispatchDrop(target: HTMLElement, files: File[]) {
+  const event = new Event('drop', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'dataTransfer', { value: { files, types: ['Files'] } });
+  target.dispatchEvent(event);
 }
 
 describe('audio player', () => {
@@ -51,6 +61,17 @@ describe('audio player', () => {
     expect(container.querySelector('.audio-player')).not.toBeNull();
     expect(container.querySelector<HTMLAudioElement>('.audio-engine')?.src).toBe('blob:audio');
     expect(container.querySelector<HTMLButtonElement>('.audio-play-toggle')?.getAttribute('aria-label')).toContain('播放');
+  });
+
+  it('imports both an SRT file and an audio file from one drop', async () => {
+    await act(async () => root.render(<App />));
+    const dropzone = container.querySelector<HTMLElement>('.source-dropzone')!;
+
+    await act(async () => dispatchDrop(dropzone, [createSrtFile(), createAudioFile()]));
+
+    expect(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="剪映识别结果 SRT"]')?.value).toContain('第一句');
+    expect(container.querySelector('.audio-player')).not.toBeNull();
+    expect(container.querySelector<HTMLAudioElement>('.audio-engine')?.src).toBe('blob:audio');
   });
 
   it('moves the audio position with integrated step controls', async () => {

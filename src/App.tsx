@@ -338,7 +338,7 @@ function App() {
   }
 
   function loadAudioFile(file: File) {
-    if (!file.type.startsWith('audio/') && !/\.(aac|flac|m4a|mp3|ogg|wav|webm)$/i.test(file.name)) {
+    if (!isAudioFile(file)) {
       setError('仅支持音频文件导入');
       return;
     }
@@ -350,6 +350,10 @@ function App() {
     setAudioDuration(0);
     setIsAudioPlaying(false);
     setError('');
+  }
+
+  function isAudioFile(file: File) {
+    return file.type.startsWith('audio/') || /\.(aac|flac|m4a|mp3|ogg|wav|webm)$/i.test(file.name);
   }
 
   async function onFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -378,10 +382,8 @@ function App() {
   async function onSourceDrop(event: ReactDragEvent<HTMLDivElement>) {
     event.preventDefault();
     setIsDragging(false);
-    const file = event.dataTransfer.files?.[0];
-    if (!file) return;
-    if (file.type.startsWith('audio/') || /\.(aac|flac|m4a|mp3|ogg|wav|webm)$/i.test(file.name)) loadAudioFile(file);
-    else await loadSourceFile(file);
+    const files = Array.from(event.dataTransfer.files ?? []);
+    await Promise.all(files.map((file) => isAudioFile(file) ? loadAudioFile(file) : loadSourceFile(file)));
   }
 
   function toggleAudioPlayback() {
@@ -734,12 +736,12 @@ function App() {
 
       <section className="workspace-grid import-grid">
         <div className={`panel source-panel ${isDragging ? 'dragging' : ''}`} onDragOver={onSourceDragOver} onDragLeave={onSourceDragLeave} onDrop={onSourceDrop}>
-          <div className={`source-dropzone ${isDragging ? 'dragging' : ''}`} role="region" aria-label="SRT 文件导入区域">
+          <div className={`source-dropzone ${isDragging ? 'dragging' : ''}`} role="region" aria-label="SRT 与音频文件导入区域">
             <div className="panel-heading">
               <div><p className="section-kicker">现场文本</p><h3>剪映识别结果</h3></div>
               <div className="source-upload-actions"><button type="button" className="upload-button" onClick={() => sourceFileInputRef.current?.click()}>选择 SRT</button><input ref={sourceFileInputRef} className="source-file-input" type="file" tabIndex={-1} aria-hidden="true" accept=".srt,application/x-subrip" onChange={onFileChange} /><button type="button" className="audio-upload-button" onClick={() => audioFileInputRef.current?.click()}>选择音频</button><input ref={audioFileInputRef} className="source-file-input audio-file-input" type="file" tabIndex={-1} aria-hidden="true" accept="audio/*" onChange={onAudioFileChange} /></div>
             </div>
-            <p className="source-drop-hint">拖动 SRT 文件到这里，或选择文件导入</p>
+            <p className="source-drop-hint">拖动 SRT 与音频文件到这里，或分别选择文件导入</p>
             <div className="segmented" role="tablist" aria-label="源文本视图">
               <button id="source-view-srt" type="button" role="tab" aria-controls="source-srt-panel" aria-selected={sourceView === 'srt'} tabIndex={sourceView === 'srt' ? 0 : -1} className={sourceView === 'srt' ? 'selected' : ''} onClick={() => setSourceView('srt')} onKeyDown={(event) => handleSourceTabKeydown(event, 'srt')}>SRT 编辑</button>
               <button id="source-view-txt" type="button" role="tab" aria-controls="source-txt-panel" aria-selected={sourceView === 'txt'} tabIndex={sourceView === 'txt' ? 0 : -1} className={sourceView === 'txt' ? 'selected' : ''} onClick={() => setSourceView('txt')} onKeyDown={(event) => handleSourceTabKeydown(event, 'txt')}>TXT 只读</button>
