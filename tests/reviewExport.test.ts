@@ -18,6 +18,15 @@ describe('review export', () => {
     );
   });
 
+  it('joins multiple reference lyric lines when they map to one subtitle entry', () => {
+    const entries = parseSubtitle('1\n00:00:01,000 --> 00:00:03,000\n提醒我我也只是一颗寂寞的星星', 'srt');
+    const rows = alignSubtitles(entries, ['提醒我', '我也只是一颗寂寞的星星']);
+
+    expect(rows[0].referenceText).toBe('提醒我\n我也只是一颗寂寞的星星');
+    expect(exportTxt(createExportEntries(entries, rows, 'txt'))).toBe('提醒我我也只是一颗寂寞的星星\n');
+    expect(exportSrt(createExportEntries(entries, rows, 'srt'))).toContain('\n提醒我我也只是一颗寂寞的星星\n');
+  });
+
   it('omits an unchecked original subtitle from both formats without changing other times', () => {
     const entries = parseSubtitle(source, 'srt');
     const rows = alignSubtitles(entries, ['第一句', '中间新增', '第二句']);

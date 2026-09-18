@@ -1,6 +1,13 @@
 import type { AlignmentRow } from './alignment';
 import type { SubtitleEntry } from './subtitles';
 
+function getExportText(row: AlignmentRow): string {
+  if (row.localIds.length === 1 && row.chosenText === row.referenceText && row.referenceText.includes('\n')) {
+    return row.chosenText.replace(/\r?\n/g, '');
+  }
+  return row.chosenText;
+}
+
 export function createExportEntries(entries: SubtitleEntry[], rows: AlignmentRow[], format: 'srt' | 'txt'): SubtitleEntry[] {
   if (rows.length === 0) return entries;
   const byId = new Map(entries.map((entry) => [entry.id, entry]));
@@ -10,7 +17,7 @@ export function createExportEntries(entries: SubtitleEntry[], rows: AlignmentRow
     const row = rows[index];
     if (row.localIds.length === 1) {
       const entry = byId.get(row.localIds[0]);
-      if (entry && row.includeInExport) result.push({ ...entry, text: row.chosenText });
+      if (entry && row.includeInExport) result.push({ ...entry, text: getExportText(row) });
       continue;
     }
     if (row.kind !== 'add' || !row.includeInExport || !row.chosenText.trim()) continue;
