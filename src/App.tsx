@@ -102,12 +102,13 @@ type ReviewRowProps = {
   onPasteRow: (id: string) => void;
   onPlayRow: (row: AlignmentRow) => void;
   activePlaybackRowId: string | null;
+  currentAudioRowId: string | null;
 };
 
-const ReviewRow = memo(function ReviewRow({ row, index, showTrackHeading, track, copiedLineKey, timestampMs, playbackTimeMs, onChooseRow, onUpdateRow, onToggleExport, onCopyReference, onPasteRow, onPlayRow, activePlaybackRowId }: ReviewRowProps) {
+const ReviewRow = memo(function ReviewRow({ row, index, showTrackHeading, track, copiedLineKey, timestampMs, playbackTimeMs, onChooseRow, onUpdateRow, onToggleExport, onCopyReference, onPasteRow, onPlayRow, activePlaybackRowId, currentAudioRowId }: ReviewRowProps) {
   return <Fragment>
     {showTrackHeading && <div className="playlist-section-heading"><span>{String((row.trackIndex ?? 0) + 1).padStart(2, '0')}</span><strong>{track?.selectedSong?.name ?? track?.query ?? '歌单歌曲'}</strong><small>{track?.selectedSong?.artists}</small></div>}
-    <div className={`diff-row ${row.kind}`}>
+    <div className={`diff-row ${row.kind} ${currentAudioRowId === row.id ? 'audio-current' : ''}`} data-row-id={row.id}>
       <div className="line-number" title={timestampMs === undefined ? undefined : formatSubtitleTimestamp(timestampMs)}>{String(index + 1).padStart(2, '0')}</div>
       <div className="diff-cell local"><span>{row.localText || '—'}</span></div>
       <div className="diff-cell reference">{row.referenceText ? <div className="reference-lines">{splitReferenceLines(row.referenceText).map((lineText, lineIndex) => { const lineKey = `${row.id}-${lineIndex}`; return <div className="reference-line" key={lineKey}><span>{lineText}</span><button type="button" className="copy-reference" onClick={() => onCopyReference(row, lineText, lineIndex)} aria-label={`复制第 ${index + 1} 行网易云歌词的第 ${lineIndex + 1} 句`}>{copiedLineKey === lineKey ? '已复制' : '复制'}</button></div>; })}</div> : <span>—</span>}</div>
@@ -162,6 +163,8 @@ function App() {
   const [audioVolume, setAudioVolume] = useState(1);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [activePlaybackRowId, setActivePlaybackRowId] = useState<string | null>(null);
+  const [lyricFollowEnabled, setLyricFollowEnabled] = useState(false);
+  const [currentAudioRowId, setCurrentAudioRowId] = useState<string | null>(null);
   const [copiedLineKey, setCopiedLineKey] = useState<string | null>(null);
   const rowsRef = useRef(rows);
   const exportAnchorIdRef = useRef<string | null>(null);
@@ -346,6 +349,7 @@ function App() {
     setAudioName(file.name);
     rowPlaybackEndRef.current = null;
     setActivePlaybackRowId(null);
+    setCurrentAudioRowId(null);
     setAudioCurrentTime(0);
     setAudioDuration(0);
     setIsAudioPlaying(false);
@@ -402,9 +406,11 @@ function App() {
     if (!audio) return;
     rowPlaybackEndRef.current = null;
     setActivePlaybackRowId(null);
+    setCurrentAudioRowId(null);
     const maxTime = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : Number.POSITIVE_INFINITY;
     const nextTime = Math.min(maxTime, Math.max(0, audio.currentTime + seconds));
     audio.currentTime = nextTime;
+    setCurrentAudioRowId(findAudioRowId(nextTime * 1_000));
     setAudioCurrentTime(nextTime);
   }
 
@@ -413,7 +419,9 @@ function App() {
     if (!audio) return;
     rowPlaybackEndRef.current = null;
     setActivePlaybackRowId(null);
+    setCurrentAudioRowId(null);
     audio.currentTime = value;
+    setCurrentAudioRowId(findAudioRowId(value * 1_000));
     setAudioCurrentTime(value);
   }
 
@@ -653,11 +661,31 @@ function App() {
     if (!entry || entry.startMs === undefined || !audio) return;
     rowPlaybackEndRef.current = entry.endMs === undefined ? null : entry.endMs / 1000;
     setActivePlaybackRowId(row.id);
+    setCurrentAudioRowId(row.id);
     audio.currentTime = entry.startMs / 1000;
     setAudioCurrentTime(audio.currentTime);
     const result = audio.play();
     result?.catch(() => setError('无法播放音频，请检查文件格式或浏览器权限'));
   }, [entries]);
+
+  function findAudioRowId(timeMs: number): string | null {
+    const timelineRows = rowsRef.current.map((row) => {
+      const localEntries = row.localIds.map((id) => entries.find((item) => item.id === id)).filter((entry): entry is SubtitleEntry => entry !== undefined);
+      const startTimes = localEntries.flatMap((entry) => entry.startMs === undefined ? [] : [entry.startMs]);
+      const endTimes = localEntries.flatMap((entry) => entry.endMs === undefined ? [] : [entry.endMs]);
+      return {
+        row,
+        startMs: startTimes.length > 0 ? Math.min(...startTimes) : undefined,
+        endMs: endTimes.length > 0 ? Math.max(...endTimes) : undefined,
+      };
+    });
+    const currentRow = timelineRows.find(({ startMs, endMs }) => startMs !== undefined && startMs <= timeMs && (endMs === undefined || timeMs < endMs));
+    if (currentRow) return currentRow.row.id;
+    const nextRow = timelineRows
+      .filter(({ startMs }) => startMs !== undefined && startMs > timeMs)
+      .sort((left, right) => left.startMs! - right.startMs!)[0];
+    return nextRow?.row.id ?? null;
+  }
 
   function handleAudioTimeUpdate(event: SyntheticEvent<HTMLAudioElement>) {
     const audio = event.currentTarget;
@@ -666,9 +694,18 @@ function App() {
       audio.currentTime = rowEnd;
       rowPlaybackEndRef.current = null;
       setActivePlaybackRowId(null);
+      setCurrentAudioRowId(activePlaybackRowId ?? findAudioRowId(rowEnd * 1_000));
       audio.pause();
       setAudioCurrentTime(rowEnd);
       return;
+    }
+    const nextAudioRowId = findAudioRowId(audio.currentTime * 1_000);
+    if (nextAudioRowId !== currentAudioRowId) {
+      setCurrentAudioRowId(nextAudioRowId);
+      if (lyricFollowEnabled && isAudioPlaying && activePlaybackRowId === null && nextAudioRowId) {
+          const element = Array.from(document.querySelectorAll<HTMLElement>('.diff-row')).find((candidate) => candidate.dataset.rowId === nextAudioRowId);
+          element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
     }
     setAudioCurrentTime(audio.currentTime);
   }
@@ -707,7 +744,7 @@ function App() {
       </header>
 
       {audioUrl && <div className="audio-player" role="region" aria-label="音频播放器">
-        <audio ref={audioRef} className="audio-engine" src={audioUrl} preload="metadata" onLoadedMetadata={(event) => setAudioDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0)} onTimeUpdate={handleAudioTimeUpdate} onPlay={() => setIsAudioPlaying(true)} onPause={() => { setActivePlaybackRowId(null); setIsAudioPlaying(false); }} onEnded={() => { rowPlaybackEndRef.current = null; setActivePlaybackRowId(null); setIsAudioPlaying(false); }} />
+        <audio ref={audioRef} className="audio-engine" src={audioUrl} preload="metadata" onLoadedMetadata={(event) => setAudioDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0)} onTimeUpdate={handleAudioTimeUpdate} onPlay={() => setIsAudioPlaying(true)} onPause={() => { rowPlaybackEndRef.current = null; setActivePlaybackRowId(null); setIsAudioPlaying(false); }} onEnded={() => { rowPlaybackEndRef.current = null; setActivePlaybackRowId(null); setIsAudioPlaying(false); }} />
         <div className="audio-player-heading"><strong>{audioName}</strong><span>{formatAudioTime(audioCurrentTime)} / {formatAudioTime(audioDuration)}</span></div>
         <div className="audio-player-controls">
           <button type="button" className="audio-play-toggle" onClick={toggleAudioPlayback} aria-label={isAudioPlaying ? '暂停音频' : '播放音频'}>{isAudioPlaying ? '暂停' : '播放'}</button>
@@ -717,7 +754,8 @@ function App() {
           <button type="button" className="audio-step" data-audio-step="5" onClick={() => stepAudio(5)} aria-label="前进 5 秒">+5</button>
           <button type="button" className="audio-step" data-audio-step="10" onClick={() => stepAudio(10)} aria-label="前进 10 秒">+10</button>
           <label className="audio-volume"><span>音量</span><input type="range" min="0" max="1" step="0.05" value={audioVolume} onChange={(event) => changeAudioVolume(Number(event.target.value))} aria-label="音量" /></label>
-          <button type="button" className="audio-clear" onClick={() => { audioRef.current?.pause(); rowPlaybackEndRef.current = null; setActivePlaybackRowId(null); setAudioUrl(null); setAudioName(''); setAudioCurrentTime(0); setAudioDuration(0); setIsAudioPlaying(false); }} aria-label="移除音频">移除</button>
+          <label className="audio-follow-toggle"><input type="checkbox" checked={lyricFollowEnabled} onChange={(event) => setLyricFollowEnabled(event.target.checked)} aria-label="歌词跟随" /><span>歌词跟随</span></label>
+          <button type="button" className="audio-clear" onClick={() => { audioRef.current?.pause(); rowPlaybackEndRef.current = null; setActivePlaybackRowId(null); setCurrentAudioRowId(null); setAudioUrl(null); setAudioName(''); setAudioCurrentTime(0); setAudioDuration(0); setIsAudioPlaying(false); }} aria-label="移除音频">移除</button>
         </div>
       </div>}
 
@@ -793,7 +831,7 @@ function App() {
             const previousTrackIndex = index > 0 ? rows[index - 1].trackIndex : undefined;
             const showTrackHeading = matchMode === 'playlist' && row.trackIndex !== undefined && row.trackIndex !== previousTrackIndex;
             const track = row.trackIndex === undefined ? undefined : playlistTracks[row.trackIndex];
-            return <ReviewRow key={row.id} row={row} index={index} showTrackHeading={showTrackHeading} track={track} copiedLineKey={copiedLineKey} timestampMs={rowPlaybackTime(row)} playbackTimeMs={audioUrl ? rowPlaybackTime(row) : undefined} onChooseRow={chooseRow} onUpdateRow={updateRow} onToggleExport={toggleExport} onCopyReference={copyReference} onPasteRow={pasteRow} onPlayRow={playRow} activePlaybackRowId={activePlaybackRowId} />;
+            return <ReviewRow key={row.id} row={row} index={index} showTrackHeading={showTrackHeading} track={track} copiedLineKey={copiedLineKey} timestampMs={rowPlaybackTime(row)} playbackTimeMs={audioUrl ? rowPlaybackTime(row) : undefined} onChooseRow={chooseRow} onUpdateRow={updateRow} onToggleExport={toggleExport} onCopyReference={copyReference} onPasteRow={pasteRow} onPlayRow={playRow} activePlaybackRowId={activePlaybackRowId} currentAudioRowId={currentAudioRowId} />;
           })}
         </div>
       </section>

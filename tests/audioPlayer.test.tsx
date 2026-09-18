@@ -183,4 +183,60 @@ describe('audio player', () => {
     await act(async () => audio.dispatchEvent(new Event('timeupdate', { bubbles: true })));
     expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(1);
   });
+
+  it('scrolls the current subtitle row during ordinary playback when lyric follow is enabled', async () => {
+    await act(async () => root.render(<App />));
+    await act(async () => selectFile(container.querySelector<HTMLInputElement>('input.audio-file-input')!, createAudioFile()));
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+    const followToggle = container.querySelector<HTMLInputElement>('input[aria-label="歌词跟随"]')!;
+    await act(async () => followToggle.click());
+    const audio = container.querySelector<HTMLAudioElement>('.audio-engine')!;
+    await act(async () => container.querySelector<HTMLButtonElement>('.audio-play-toggle')!.click());
+    await act(async () => audio.dispatchEvent(new Event('play', { bubbles: true })));
+    audio.currentTime = 1.5;
+    await act(async () => audio.dispatchEvent(new Event('timeupdate', { bubbles: true })));
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
+    expect(container.querySelector('.diff-row.audio-current')).not.toBeNull();
+  });
+
+  it('does not auto-scroll while a single row playback is active', async () => {
+    await act(async () => root.render(<App />));
+    await act(async () => selectFile(container.querySelector<HTMLInputElement>('input.audio-file-input')!, createAudioFile()));
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+    await act(async () => container.querySelector<HTMLInputElement>('input[aria-label="歌词跟随"]')!.click());
+    const audio = container.querySelector<HTMLAudioElement>('.audio-engine')!;
+    await act(async () => container.querySelector<HTMLButtonElement>('.row-playback')!.click());
+    audio.currentTime = 1.5;
+    await act(async () => audio.dispatchEvent(new Event('timeupdate', { bubbles: true })));
+
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it('keeps the current row highlight when follow is disabled or audio is paused', async () => {
+    await act(async () => root.render(<App />));
+    await act(async () => selectFile(container.querySelector<HTMLInputElement>('input.audio-file-input')!, createAudioFile()));
+    const audio = container.querySelector<HTMLAudioElement>('.audio-engine')!;
+    audio.currentTime = 1.5;
+    await act(async () => audio.dispatchEvent(new Event('timeupdate', { bubbles: true })));
+    expect(container.querySelector('.diff-row.audio-current')).not.toBeNull();
+
+    await act(async () => container.querySelector<HTMLInputElement>('input[aria-label="歌词跟随"]')!.click());
+    expect(container.querySelector('.diff-row.audio-current')).not.toBeNull();
+    await act(async () => audio.dispatchEvent(new Event('pause', { bubbles: true })));
+    expect(container.querySelector('.diff-row.audio-current')).not.toBeNull();
+  });
+
+  it('highlights the nearest upcoming subtitle while the playhead is between lines', async () => {
+    await act(async () => root.render(<App />));
+    await act(async () => selectFile(container.querySelector<HTMLInputElement>('input.audio-file-input')!, createAudioFile()));
+    const audio = container.querySelector<HTMLAudioElement>('.audio-engine')!;
+    audio.currentTime = 3.5;
+    await act(async () => audio.dispatchEvent(new Event('timeupdate', { bubbles: true })));
+
+    const currentRow = container.querySelector<HTMLElement>('.diff-row.audio-current');
+    expect(currentRow?.querySelector('.line-number')?.textContent).toBe('02');
+  });
 });
