@@ -129,6 +129,30 @@ describe('alignment controls', () => {
     expect(checkboxes().map((checkbox) => checkbox.checked)).toEqual([true, false, true, true, true, true]);
   });
 
+  it('uses Shift clicks to apply the clicked export state across a continuous range', async () => {
+    vi.mocked(fetchNeteaseLyric).mockResolvedValue('片头\n把酒倒满\n中间新增\n朋友一生一起走\n那些日子不再有\n片尾');
+    await act(async () => root.render(<App />));
+    await act(async () => {
+      container.querySelector<HTMLFormElement>('form.search-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await act(async () => container.querySelector<HTMLButtonElement>('.candidate')!.click());
+
+    const checkboxes = () => Array.from(container.querySelectorAll<HTMLInputElement>('.diff-row .row-controls input[type="checkbox"]'));
+    const shiftClick = (checkbox: HTMLInputElement) => checkbox.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: true }));
+
+    await act(async () => {
+      checkboxes()[1].click();
+      shiftClick(checkboxes()[4]);
+    });
+    expect(checkboxes().map((checkbox) => checkbox.checked)).toEqual([false, false, false, false, false, false]);
+
+    await act(async () => {
+      checkboxes()[4].click();
+      shiftClick(checkboxes()[1]);
+    });
+    expect(checkboxes().map((checkbox) => checkbox.checked)).toEqual([false, true, true, true, true, false]);
+  });
+
   it('only rerenders the review row being edited or toggled', async () => {
     vi.mocked(fetchNeteaseLyric).mockResolvedValue('把酒倒满\n朋友一生一起走\n那些日子不再有');
     await act(async () => root.render(<App />));
