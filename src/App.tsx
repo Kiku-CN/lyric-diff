@@ -118,6 +118,7 @@ const ReviewRow = memo(function ReviewRow({ row, index, showTrackHeading, track,
         <input aria-label={`编辑第 ${index + 1} 行`} value={row.chosenText} disabled={row.localIds.length > 1} onChange={(event) => onUpdateRow(row.id, { chosenText: event.target.value })} />
         <button type="button" className="clear-paste-row" aria-label={`清空并粘贴第 ${index + 1} 行`} title="清空当前输入并粘贴剪切板文本" onClick={() => onPasteRow(row.id)} disabled={row.localIds.length > 1}>清空并粘贴</button>
         <label className="export-toggle"><input type="checkbox" aria-label={`导出第 ${index + 1} 行`} checked={row.includeInExport} onChange={(event) => onToggleExport(row.id, event.target.checked, event.nativeEvent instanceof MouseEvent && event.nativeEvent.shiftKey)} />导出</label>
+        <label className="review-toggle"><input type="checkbox" aria-label={`复核第 ${index + 1} 行`} checked={row.needsReview} onChange={(event) => onUpdateRow(row.id, { needsReview: event.target.checked })} />复核</label>
       </div>
     </div>
   </Fragment>;

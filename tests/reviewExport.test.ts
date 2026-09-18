@@ -18,6 +18,26 @@ describe('review export', () => {
     );
   });
 
+  it('marks an exported row that needs manual review in both formats', () => {
+    const entries = parseSubtitle(source, 'srt');
+    const rows = alignSubtitles(entries, ['第一句', '中间新增', '第二句']);
+    rows[0].needsReview = true;
+    rows[1].needsReview = true;
+
+    expect(exportTxt(createExportEntries(entries, rows, 'txt'))).toBe('第一句*\n中间新增*\n第二句\n');
+    expect(exportSrt(createExportEntries(entries, rows, 'srt'))).toContain('\n第一句*\n');
+    expect(exportSrt(createExportEntries(entries, rows, 'srt'))).toContain('\n中间新增*\n');
+  });
+
+  it('does not mark a row that is excluded from export even when review is checked', () => {
+    const entries = parseSubtitle(source, 'srt');
+    const rows = alignSubtitles(entries, ['第一句', '第二句']);
+    rows[1].includeInExport = false;
+    rows[1].needsReview = true;
+
+    expect(exportTxt(createExportEntries(entries, rows, 'txt'))).toBe('第一句\n');
+  });
+
   it('joins multiple reference lyric lines when they map to one subtitle entry', () => {
     const entries = parseSubtitle('1\n00:00:01,000 --> 00:00:03,000\n提醒我我也只是一颗寂寞的星星', 'srt');
     const rows = alignSubtitles(entries, ['提醒我', '我也只是一颗寂寞的星星']);

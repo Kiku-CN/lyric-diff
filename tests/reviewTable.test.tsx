@@ -58,6 +58,18 @@ describe('review table behavior', () => {
     expect(container.querySelector<HTMLElement>('.diff-row .line-number')?.title).toBe('00:00:01,000');
   });
 
+  it('shows a review checkbox after export and updates the selected row', async () => {
+    await act(async () => root.render(<App />));
+
+    const reviewToggles = Array.from(container.querySelectorAll<HTMLInputElement>('input[aria-label^="复核第"]'));
+    expect(reviewToggles).toHaveLength(3);
+    expect(reviewToggles.every((toggle) => !toggle.checked)).toBe(true);
+
+    await act(async () => reviewToggles[1].click());
+
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="复核第 2 行"]')?.checked).toBe(true);
+  });
+
   it('preserves the searched and selected NetEase state when the SRT source changes', async () => {
     vi.mocked(searchNetease).mockResolvedValue([{ id: 17, name: '现场曲', artists: '歌手', album: '专辑' }]);
     vi.mocked(fetchNeteaseLyric).mockResolvedValue('把酒倒满\n朋友一生一起走\n那些日子不再有');

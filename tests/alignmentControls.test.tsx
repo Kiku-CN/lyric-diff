@@ -132,7 +132,7 @@ describe('alignment controls', () => {
       container.querySelector<HTMLFormElement>('form.search-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
     await act(async () => container.querySelector<HTMLButtonElement>('.candidate')!.click());
-    const checkboxes = () => Array.from(container.querySelectorAll<HTMLInputElement>('.diff-row .row-controls input[type="checkbox"]'));
+    const checkboxes = () => Array.from(container.querySelectorAll<HTMLInputElement>('.diff-row .row-controls input[aria-label^="导出第"]'));
     expect(checkboxes().map((checkbox) => checkbox.checked)).toEqual([false, true, true, true, true, false]);
     await act(async () => {
       checkboxes()[0].click();
@@ -150,7 +150,7 @@ describe('alignment controls', () => {
     });
     await act(async () => container.querySelector<HTMLButtonElement>('.candidate')!.click());
 
-    const checkboxes = () => Array.from(container.querySelectorAll<HTMLInputElement>('.diff-row .row-controls input[type="checkbox"]'));
+    const checkboxes = () => Array.from(container.querySelectorAll<HTMLInputElement>('.diff-row .row-controls input[aria-label^="导出第"]'));
     const shiftClick = (checkbox: HTMLInputElement) => checkbox.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: true }));
 
     await act(async () => {

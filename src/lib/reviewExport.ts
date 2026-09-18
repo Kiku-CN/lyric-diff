@@ -2,10 +2,13 @@ import type { AlignmentRow } from './alignment';
 import type { SubtitleEntry } from './subtitles';
 
 function getExportText(row: AlignmentRow): string {
+  let text: string;
   if (row.localIds.length === 1 && row.chosenText === row.referenceText && row.referenceText.includes('\n')) {
-    return row.chosenText.replace(/\r?\n/g, '');
+    text = row.chosenText.replace(/\r?\n/g, '');
+  } else {
+    text = row.chosenText;
   }
-  return row.chosenText;
+  return row.needsReview ? `${text}*` : text;
 }
 
 export function createExportEntries(entries: SubtitleEntry[], rows: AlignmentRow[], format: 'srt' | 'txt'): SubtitleEntry[] {
@@ -22,7 +25,7 @@ export function createExportEntries(entries: SubtitleEntry[], rows: AlignmentRow
     }
     if (row.kind !== 'add' || !row.includeInExport || !row.chosenText.trim()) continue;
     if (format === 'txt') {
-      result.push({ id: row.id, index: result.length + 1, text: row.chosenText });
+      result.push({ id: row.id, index: result.length + 1, text: getExportText(row) });
       continue;
     }
 
@@ -53,7 +56,7 @@ export function createExportEntries(entries: SubtitleEntry[], rows: AlignmentRow
     additions.forEach((item, offset) => {
       const startMs = intervalStart + Math.floor(span * offset / additions.length);
       const endMs = Math.max(startMs + 1, intervalStart + Math.floor(span * (offset + 1) / additions.length));
-      result.push({ id: item.id, index: result.length + 1, startMs, endMs, text: item.chosenText });
+      result.push({ id: item.id, index: result.length + 1, startMs, endMs, text: getExportText(item) });
     });
   }
   return result;
