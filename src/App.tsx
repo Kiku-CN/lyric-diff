@@ -99,11 +99,12 @@ type ReviewRowProps = {
   onUpdateRow: (id: string, patch: Partial<AlignmentRow>) => void;
   onToggleExport: (id: string, checked: boolean, shiftKey: boolean) => void;
   onCopyReference: (row: AlignmentRow, lineText: string, lineIndex: number) => void;
+  onPasteRow: (id: string) => void;
   onPlayRow: (row: AlignmentRow) => void;
   activePlaybackRowId: string | null;
 };
 
-const ReviewRow = memo(function ReviewRow({ row, index, showTrackHeading, track, copiedLineKey, timestampMs, playbackTimeMs, onChooseRow, onUpdateRow, onToggleExport, onCopyReference, onPlayRow, activePlaybackRowId }: ReviewRowProps) {
+const ReviewRow = memo(function ReviewRow({ row, index, showTrackHeading, track, copiedLineKey, timestampMs, playbackTimeMs, onChooseRow, onUpdateRow, onToggleExport, onCopyReference, onPasteRow, onPlayRow, activePlaybackRowId }: ReviewRowProps) {
   return <Fragment>
     {showTrackHeading && <div className="playlist-section-heading"><span>{String((row.trackIndex ?? 0) + 1).padStart(2, '0')}</span><strong>{track?.selectedSong?.name ?? track?.query ?? '歌单歌曲'}</strong><small>{track?.selectedSong?.artists}</small></div>}
     <div className={`diff-row ${row.kind}`}>
@@ -115,6 +116,7 @@ const ReviewRow = memo(function ReviewRow({ row, index, showTrackHeading, track,
         <button type="button" onClick={() => onChooseRow(row, 'local')} className={row.chosenText === row.localText ? 'active' : ''} disabled={row.kind === 'add'}>现场</button>
         <button type="button" onClick={() => onChooseRow(row, 'reference')} className={row.chosenText === row.referenceText && Boolean(row.referenceText) ? 'active reference-choice' : ''} disabled={!row.referenceText || row.localIds.length > 1} title={row.localIds.length > 1 ? '多个 SRT 条目合并显示，参考文本仅用于对比' : undefined}>参考</button>
         <input aria-label={`编辑第 ${index + 1} 行`} value={row.chosenText} disabled={row.localIds.length > 1} onChange={(event) => onUpdateRow(row.id, { chosenText: event.target.value })} />
+        <button type="button" className="clear-paste-row" aria-label={`清空并粘贴第 ${index + 1} 行`} title="清空当前输入并粘贴剪切板文本" onClick={() => onPasteRow(row.id)} disabled={row.localIds.length > 1}>清空并粘贴</button>
         <label className="export-toggle"><input type="checkbox" aria-label={`导出第 ${index + 1} 行`} checked={row.includeInExport} onChange={(event) => onToggleExport(row.id, event.target.checked, event.nativeEvent instanceof MouseEvent && event.nativeEvent.shiftKey)} />导出</label>
       </div>
     </div>
@@ -633,6 +635,15 @@ function App() {
     }
   }, []);
 
+  const pasteRow = useCallback(async (id: string) => {
+    try {
+      const text = await navigator.clipboard.readText();
+      updateRow(id, { chosenText: text });
+    } catch {
+      setError('无法读取剪贴板，请检查浏览器权限');
+    }
+  }, [updateRow]);
+
   const playRow = useCallback((row: AlignmentRow) => {
     const entry = entries.find((item) => item.id === row.localIds[0]);
     const audio = audioRef.current;
@@ -779,7 +790,7 @@ function App() {
             const previousTrackIndex = index > 0 ? rows[index - 1].trackIndex : undefined;
             const showTrackHeading = matchMode === 'playlist' && row.trackIndex !== undefined && row.trackIndex !== previousTrackIndex;
             const track = row.trackIndex === undefined ? undefined : playlistTracks[row.trackIndex];
-            return <ReviewRow key={row.id} row={row} index={index} showTrackHeading={showTrackHeading} track={track} copiedLineKey={copiedLineKey} timestampMs={rowPlaybackTime(row)} playbackTimeMs={audioUrl ? rowPlaybackTime(row) : undefined} onChooseRow={chooseRow} onUpdateRow={updateRow} onToggleExport={toggleExport} onCopyReference={copyReference} onPlayRow={playRow} activePlaybackRowId={activePlaybackRowId} />;
+            return <ReviewRow key={row.id} row={row} index={index} showTrackHeading={showTrackHeading} track={track} copiedLineKey={copiedLineKey} timestampMs={rowPlaybackTime(row)} playbackTimeMs={audioUrl ? rowPlaybackTime(row) : undefined} onChooseRow={chooseRow} onUpdateRow={updateRow} onToggleExport={toggleExport} onCopyReference={copyReference} onPasteRow={pasteRow} onPlayRow={playRow} activePlaybackRowId={activePlaybackRowId} />;
           })}
         </div>
       </section>

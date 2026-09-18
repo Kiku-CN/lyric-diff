@@ -91,6 +91,19 @@ describe('alignment controls', () => {
     expect(vi.mocked(fetchNeteaseLyric)).toHaveBeenCalledTimes(1);
   });
 
+  it('replaces a row edit with clipboard text from the clear-and-paste action', async () => {
+    await act(async () => root.render(<App />));
+    const clipboard = { readText: vi.fn().mockResolvedValue('剪切板校对文本') };
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: clipboard });
+
+    const input = container.querySelector<HTMLInputElement>('.diff-row:not(.add) .row-controls > input')!;
+    const action = container.querySelector<HTMLButtonElement>('.diff-row:not(.add) button[aria-label="清空并粘贴第 1 行"]')!;
+    await act(async () => action.click());
+
+    expect(clipboard.readText).toHaveBeenCalledTimes(1);
+    expect(input.value).toBe('剪切板校对文本');
+  });
+
   it('uses the latest settings when lyrics finish loading', async () => {
     let resolveLyric!: (value: string) => void;
     vi.mocked(fetchNeteaseLyric).mockReturnValue(new Promise((resolve) => { resolveLyric = resolve; }));
