@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { runThrottled } from '../src/lib/requestScheduler';
+import { getPlaylistThrottleOptions, runThrottled } from '../src/lib/requestScheduler';
 
 describe('throttled request scheduler', () => {
   it('limits active work to two requests and preserves input order', async () => {
@@ -33,5 +33,22 @@ describe('throttled request scheduler', () => {
     });
 
     expect(waits).toEqual([1300, 1300]);
+  });
+
+  it('can delay the first request for an isolated retry', async () => {
+    const waits: number[] = [];
+    await runThrottled([1], async (value) => value, {
+      delayFirst: true,
+      delayRangeMs: [1200, 2500],
+      random: () => 0.5,
+      wait: async (milliseconds) => { waits.push(milliseconds); },
+    });
+
+    expect(waits).toEqual([1850]);
+  });
+
+  it('uses stronger throttling when the playlist has more than eight tracks', () => {
+    expect(getPlaylistThrottleOptions(8)).toEqual({ maxConcurrency: 2, delayRangeMs: [1200, 2500] });
+    expect(getPlaylistThrottleOptions(9)).toEqual({ maxConcurrency: 1, delayRangeMs: [2500, 5000] });
   });
 });

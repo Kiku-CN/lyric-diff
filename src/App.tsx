@@ -3,7 +3,7 @@ import { alignSubtitles, type AlignmentRow } from './lib/alignment';
 import type { MatchingAlgorithm } from './lib/matchingAlgorithms';
 import { copyText, splitReferenceLines } from './lib/clipboard';
 import { alignPlaylist, type PlaylistAlignmentRow, type PlaylistTrackReference } from './lib/playlistMatching';
-import { runThrottled } from './lib/requestScheduler';
+import { getPlaylistThrottleOptions, runThrottled } from './lib/requestScheduler';
 import { createExportEntries } from './lib/reviewExport';
 import { exportSrt, exportTxt, parseSubtitle, type SubtitleEntry } from './lib/subtitles';
 import { fetchNeteaseLyric, searchNetease, stripLyricTimestamps, type NeteaseSong } from './server/netease';
@@ -18,7 +18,7 @@ type PlaylistTrackState = {
   candidates: NeteaseSong[];
   selectedSong: NeteaseSong | null;
   referenceLines: string[];
-  status: 'loading' | 'ready' | 'error';
+  status: 'queued' | 'searching' | 'search-ready' | 'lyric-loading' | 'ready' | 'error';
   error?: string;
 };
 
@@ -52,14 +52,27 @@ function formatSubtitleTimestamp(value: number): string {
 type PlaylistMatchPanelProps = {
   initialValue: string;
   isMatchingPlaylist: boolean;
+  isSearchingPlaylist?: boolean;
   playlistTracks: PlaylistTrackState[];
   onDraftChange: (value: string) => void;
   onSubmit: (value: string) => void;
   onChooseSong: (trackIndex: number, songId: number) => void;
+  onRetryTrack: (trackIndex: number, query: string) => void;
 };
 
-export function PlaylistMatchPanel({ initialValue, isMatchingPlaylist, playlistTracks, onDraftChange, onSubmit, onChooseSong }: PlaylistMatchPanelProps) {
+function playlistTrackStatus(track: PlaylistTrackState): string {
+  if (track.status === 'queued') return '等待搜索…';
+  if (track.status === 'searching') return '正在搜索…';
+  if (track.status === 'search-ready') return `已找到 ${track.candidates.length} 个候选，等待其它歌曲搜索`;
+  if (track.status === 'lyric-loading') return '正在获取歌词…';
+  if (track.status === 'ready') return `${track.selectedSong?.name ?? track.query} · ${track.selectedSong?.artists ?? ''}`;
+  return track.error ?? '搜索失败';
+}
+
+export function PlaylistMatchPanel({ initialValue, isMatchingPlaylist, isSearchingPlaylist = false, playlistTracks, onDraftChange, onSubmit, onChooseSong, onRetryTrack }: PlaylistMatchPanelProps) {
   const [playlistDraft, setPlaylistDraft] = useState(initialValue);
+  const [editingTrackIndex, setEditingTrackIndex] = useState<number | null>(null);
+  const [editingQuery, setEditingQuery] = useState('');
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -71,6 +84,21 @@ export function PlaylistMatchPanel({ initialValue, isMatchingPlaylist, playlistT
     onDraftChange(value);
   }
 
+  function beginEditing(trackIndex: number) {
+    setEditingTrackIndex(trackIndex);
+    setEditingQuery(playlistTracks[trackIndex]?.query ?? '');
+  }
+
+  function saveAndRetry(trackIndex: number) {
+    const nextQuery = editingQuery.trim();
+    if (!nextQuery) return;
+    const nextDraft = playlistTracks.map((track, index) => index === trackIndex ? nextQuery : track.query).join('\n');
+    setPlaylistDraft(nextDraft);
+    onDraftChange(nextDraft);
+    setEditingTrackIndex(null);
+    onRetryTrack(trackIndex, nextQuery);
+  }
+
   return <>
     <form className="playlist-form" onSubmit={handleSubmit}>
       <label className="field-label" htmlFor="playlist">演唱会歌单（每行一首，按演出顺序）</label>
@@ -79,10 +107,17 @@ export function PlaylistMatchPanel({ initialValue, isMatchingPlaylist, playlistT
     </form>
     <div className="playlist-track-list">
       {playlistTracks.length === 0 && <p className="empty-note">输入歌单后，工具会按顺序搜索每首歌并自动分段。</p>}
-      {playlistTracks.map((track, trackIndex) => <div className="playlist-track" key={track.id}>
-        <div className="playlist-track-heading"><span className="playlist-track-number">{String(trackIndex + 1).padStart(2, '0')}</span><div><strong>{track.query}</strong><small>{track.status === 'loading' ? '正在获取歌词…' : track.status === 'ready' ? `${track.selectedSong?.name ?? track.query} · ${track.selectedSong?.artists ?? ''}` : track.error}</small></div></div>
-        {track.candidates.length > 0 && <select aria-label={`选择第 ${trackIndex + 1} 首歌曲`} value={track.selectedSong?.id ?? ''} disabled={isMatchingPlaylist} onChange={(event) => onChooseSong(trackIndex, Number(event.target.value))}>{track.candidates.map((song) => <option key={song.id} value={song.id}>{song.name} · {song.artists}</option>)}</select>}
-      </div>)}
+      {playlistTracks.map((track, trackIndex) => {
+        const isBusy = track.status === 'queued' || track.status === 'searching' || track.status === 'lyric-loading';
+        const controlsDisabled = isBusy || (isMatchingPlaylist && !isSearchingPlaylist);
+        return <div className="playlist-track" key={track.id}>
+        <div className="playlist-track-heading"><span className="playlist-track-number">{String(trackIndex + 1).padStart(2, '0')}</span><div>{editingTrackIndex === trackIndex ? <div className="playlist-track-editor"><input aria-label={`编辑第 ${trackIndex + 1} 首歌曲名`} value={editingQuery} onChange={(event) => setEditingQuery(event.target.value)} /><button type="button" aria-label={`保存并重新搜索第 ${trackIndex + 1} 首歌曲`} disabled={!editingQuery.trim()} onClick={() => saveAndRetry(trackIndex)}>保存并重搜</button><button type="button" onClick={() => setEditingTrackIndex(null)}>取消</button></div> : <><strong>{track.query}</strong><small>{playlistTrackStatus(track)}</small></>}</div></div>
+        <div className="playlist-track-controls">
+          {track.candidates.length > 0 && <select aria-label={`选择第 ${trackIndex + 1} 首歌曲`} value={track.selectedSong?.id ?? ''} disabled={controlsDisabled} onChange={(event) => onChooseSong(trackIndex, Number(event.target.value))}>{track.candidates.map((song) => <option key={song.id} value={song.id}>{song.name} · {song.artists}</option>)}</select>}
+          {editingTrackIndex !== trackIndex && <div className="playlist-track-actions"><button type="button" aria-label={`编辑第 ${trackIndex + 1} 首歌曲`} disabled={controlsDisabled} onClick={() => beginEditing(trackIndex)}>编辑</button><button type="button" aria-label={`重新搜索第 ${trackIndex + 1} 首歌曲`} disabled={controlsDisabled} onClick={() => onRetryTrack(trackIndex, track.query)}>重试</button></div>}
+        </div>
+      </div>;
+      })}
     </div>
   </>;
 }
@@ -143,10 +178,17 @@ function App() {
   const [smartSegmentation, setSmartSegmentation] = useState(true);
   const matchingSettings = useRef({ algorithm: 'fragment' as MatchingAlgorithm, smartSegmentation: true });
   const lyricRequestId = useRef(0);
+  const playlistTracksRef = useRef<PlaylistTrackState[]>([]);
+  const playlistOperationVersionsRef = useRef(new Map<string, number>());
+  const playlistRetryPromisesRef = useRef(new Map<string, Promise<PlaylistTrackState | null>>());
+  const playlistSearchPhaseRef = useRef(false);
+  const playlistInitialSearchPromiseRef = useRef<Promise<unknown> | null>(null);
+  const playlistManualRequestQueueRef = useRef<Promise<void>>(Promise.resolve());
   const sourceLoadRequestId = useRef(0);
   const [isSearching, setIsSearching] = useState(false);
   const [isLoadingLyric, setIsLoadingLyric] = useState(false);
   const [isMatchingPlaylist, setIsMatchingPlaylist] = useState(false);
+  const [isSearchingPlaylist, setIsSearchingPlaylist] = useState(false);
   const [error, setError] = useState('');
   const [exportKind, setExportKind] = useState<ExportKind>('srt');
   const [isDragging, setIsDragging] = useState(false);
@@ -169,6 +211,7 @@ function App() {
   const rowsRef = useRef(rows);
   const exportAnchorIdRef = useRef<string | null>(null);
   rowsRef.current = rows;
+  playlistTracksRef.current = playlistTracks;
 
   const hasTimeline = entries.some((entry) => entry.startMs !== undefined);
   const diffStats = useMemo(() => rows.reduce((stats, row) => {
@@ -182,6 +225,38 @@ function App() {
   const previewText = previewOpen ? buildExportText() : '';
   const parsedTxt = useMemo(() => exportTxt(entries), [entries]);
   const hasDraftChanges = draftSourceText !== sourceText;
+
+  function replacePlaylistTracks(tracks: PlaylistTrackState[]) {
+    playlistTracksRef.current = tracks;
+    setPlaylistTracks(tracks);
+  }
+
+  function updatePlaylistTrack(trackId: string, update: (track: PlaylistTrackState) => PlaylistTrackState): PlaylistTrackState | null {
+    let updatedTrack: PlaylistTrackState | null = null;
+    const nextTracks = playlistTracksRef.current.map((track) => {
+      if (track.id !== trackId) return track;
+      updatedTrack = update(track);
+      return updatedTrack;
+    });
+    if (updatedTrack) replacePlaylistTracks(nextTracks);
+    return updatedTrack;
+  }
+
+  function nextPlaylistOperationVersion(trackId: string): number {
+    const version = (playlistOperationVersionsRef.current.get(trackId) ?? 0) + 1;
+    playlistOperationVersionsRef.current.set(trackId, version);
+    return version;
+  }
+
+  function isCurrentPlaylistOperation(trackId: string, version: number, requestId: number): boolean {
+    return requestId === lyricRequestId.current && playlistOperationVersionsRef.current.get(trackId) === version;
+  }
+
+  function enqueuePlaylistManualRequest<T>(operation: () => Promise<T>): Promise<T> {
+    const result = playlistManualRequestQueueRef.current.then(operation, operation);
+    playlistManualRequestQueueRef.current = result.then(() => undefined, () => undefined);
+    return result;
+  }
 
   useEffect(() => {
     return () => {
@@ -233,8 +308,12 @@ function App() {
 
   function resetReviewState() {
     lyricRequestId.current += 1;
+    playlistSearchPhaseRef.current = false;
+    playlistInitialSearchPromiseRef.current = null;
+    playlistRetryPromisesRef.current.clear();
     setIsLoadingLyric(false);
     setIsMatchingPlaylist(false);
+    setIsSearchingPlaylist(false);
     setIsSearching(false);
     exportAnchorIdRef.current = null;
   }
@@ -242,6 +321,9 @@ function App() {
   function changeMatchMode(nextMode: MatchMode) {
     if (nextMode === matchMode) return;
     lyricRequestId.current += 1;
+    playlistSearchPhaseRef.current = false;
+    playlistInitialSearchPromiseRef.current = null;
+    playlistRetryPromisesRef.current.clear();
     setMatchMode(nextMode);
     setSongs([]);
     setSelectedSong(null);
@@ -250,6 +332,7 @@ function App() {
     exportAnchorIdRef.current = null;
     setIsLoadingLyric(false);
     setIsMatchingPlaylist(false);
+    setIsSearchingPlaylist(false);
     setIsSearching(false);
     setError('');
   }
@@ -453,11 +536,69 @@ function App() {
     }
   }
 
+  async function searchPlaylistTrack(trackId: string, queryText: string, requestId: number, version: number): Promise<PlaylistTrackState | null> {
+    updatePlaylistTrack(trackId, (track) => ({ ...track, query: queryText, status: 'searching', error: undefined }));
+    try {
+      const candidates = await searchNetease(queryText);
+      if (!isCurrentPlaylistOperation(trackId, version, requestId)) return null;
+      const selectedSong = candidates[0] ?? null;
+      return updatePlaylistTrack(trackId, (track) => ({
+        ...track,
+        query: queryText,
+        candidates,
+        selectedSong,
+        referenceLines: [],
+        status: selectedSong ? 'search-ready' : 'error',
+        error: selectedSong ? undefined : '没有找到候选歌曲',
+      }));
+    } catch (cause) {
+      if (!isCurrentPlaylistOperation(trackId, version, requestId)) return null;
+      return updatePlaylistTrack(trackId, (track) => ({
+        ...track,
+        query: queryText,
+        candidates: [],
+        selectedSong: null,
+        referenceLines: [],
+        status: 'error',
+        error: cause instanceof Error ? cause.message : '搜索失败',
+      }));
+    }
+  }
+
+  async function loadPlaylistTrackLyric(trackId: string, song: NeteaseSong, requestId: number, version: number): Promise<PlaylistTrackState | null> {
+    try {
+      const lyric = await fetchNeteaseLyric(song.id);
+      if (!isCurrentPlaylistOperation(trackId, version, requestId)) return null;
+      const lines = stripLyricTimestamps(lyric);
+      return updatePlaylistTrack(trackId, (track) => lines.length > 0
+        ? { ...track, selectedSong: song, referenceLines: lines, status: 'ready', error: undefined }
+        : { ...track, selectedSong: song, referenceLines: [], status: 'error', error: '没有可用歌词' });
+    } catch (cause) {
+      if (!isCurrentPlaylistOperation(trackId, version, requestId)) return null;
+      return updatePlaylistTrack(trackId, (track) => ({
+        ...track,
+        selectedSong: song,
+        referenceLines: [],
+        status: 'error',
+        error: cause instanceof Error ? cause.message : '歌词获取失败',
+      }));
+    }
+  }
+
+  async function waitForPlaylistRetries(requestId: number) {
+    while (requestId === lyricRequestId.current) {
+      const snapshot = Array.from(playlistRetryPromisesRef.current.entries());
+      await Promise.all(snapshot.map(([, promise]) => promise));
+      const current = playlistRetryPromisesRef.current;
+      if (snapshot.length === current.size && snapshot.every(([trackId, promise]) => current.get(trackId) === promise)) return;
+    }
+  }
+
   async function handlePlaylistSearch(playlistText: string) {
     if (matchMode !== 'playlist') return;
     const queries = parsePlaylistQueries(playlistText);
     if (queries.length === 0) {
-      setPlaylistTracks([]);
+      replacePlaylistTracks([]);
       setRows(alignSubtitles(entries, [], matchingSettings.current));
       setReferenceLines([]);
       exportAnchorIdRef.current = null;
@@ -472,58 +613,91 @@ function App() {
       candidates: [],
       selectedSong: null,
       referenceLines: [],
-      status: 'loading',
+      status: 'queued',
     }));
-    setPlaylistTracks(initialTracks);
+    playlistOperationVersionsRef.current.clear();
+    playlistRetryPromisesRef.current.clear();
+    playlistSearchPhaseRef.current = true;
+    replacePlaylistTracks(initialTracks);
     setRows([]);
     setReferenceLines([]);
     setSongs([]);
     setSelectedSong(null);
     setIsMatchingPlaylist(true);
+    setIsSearchingPlaylist(true);
     setIsLoadingLyric(false);
     setIsSearching(false);
     setError('');
+    const throttleOptions = getPlaylistThrottleOptions(queries.length);
 
-    const searchedTracks = await runThrottled(initialTracks, async (track) => {
-      try {
-        const candidates = await searchNetease(track.query);
-        const selected = candidates[0] ?? null;
-        return {
-          ...track,
-          candidates,
-          selectedSong: selected,
-          status: selected ? 'loading' as const : 'error' as const,
-          error: selected ? undefined : '没有找到候选歌曲',
-        };
-      } catch (cause) {
-        return {
-          ...track,
-          status: 'error' as const,
-          error: cause instanceof Error ? cause.message : '搜索失败',
-        };
-      }
-    });
+    const initialSearchPromise = runThrottled(initialTracks, async (track) => {
+      const version = nextPlaylistOperationVersion(track.id);
+      return searchPlaylistTrack(track.id, track.query, requestId, version);
+    }, throttleOptions);
+    playlistInitialSearchPromiseRef.current = initialSearchPromise;
+    await initialSearchPromise;
+    if (playlistInitialSearchPromiseRef.current === initialSearchPromise) playlistInitialSearchPromiseRef.current = null;
     if (requestId !== lyricRequestId.current) return;
-    setPlaylistTracks(searchedTracks);
+    await waitForPlaylistRetries(requestId);
+    if (requestId !== lyricRequestId.current) return;
 
-    const loadedTracks = await runThrottled(searchedTracks, async (track) => {
+    playlistSearchPhaseRef.current = false;
+    setIsSearchingPlaylist(false);
+    const tracksForLyrics = playlistTracksRef.current.map((track) => track.selectedSong
+      ? { ...track, status: 'lyric-loading' as const, error: undefined }
+      : track);
+    replacePlaylistTracks(tracksForLyrics);
+    await runThrottled(tracksForLyrics, async (track) => {
       if (!track.selectedSong) return track;
-      try {
-        const lyric = await fetchNeteaseLyric(track.selectedSong.id);
-        const lines = stripLyricTimestamps(lyric);
-        return lines.length > 0
-          ? { ...track, referenceLines: lines, status: 'ready' as const, error: undefined }
-          : { ...track, status: 'error' as const, error: '没有可用歌词' };
-      } catch (cause) {
-        return { ...track, status: 'error' as const, error: cause instanceof Error ? cause.message : '歌词获取失败' };
-      }
-    });
+      const version = playlistOperationVersionsRef.current.get(track.id) ?? 0;
+      return loadPlaylistTrackLyric(track.id, track.selectedSong, requestId, version);
+    }, { ...throttleOptions, delayFirst: true });
     if (requestId !== lyricRequestId.current) return;
-    setPlaylistTracks(loadedTracks);
+    const loadedTracks = playlistTracksRef.current;
     applyPlaylistAlignment(loadedTracks);
     const failedTracks = loadedTracks.filter((track) => track.status === 'error');
-    if (failedTracks.length > 0) setError(`${failedTracks.length} 首歌曲未能获取歌词，已跳过并保留其它歌曲匹配结果`);
+    setError(failedTracks.length > 0 ? `${failedTracks.length} 首歌曲未能获取歌词，已跳过并保留其它歌曲匹配结果` : '');
     setIsMatchingPlaylist(false);
+  }
+
+  async function retryPlaylistTrack(trackIndex: number, queryText: string) {
+    if (matchMode !== 'playlist') return;
+    const track = playlistTracksRef.current[trackIndex];
+    const nextQuery = queryText.trim();
+    if (!track || !nextQuery) return;
+    const requestId = lyricRequestId.current;
+    const version = nextPlaylistOperationVersion(track.id);
+    const initialSearchPromise = playlistInitialSearchPromiseRef.current;
+    updatePlaylistTrack(track.id, (current) => ({
+      ...current,
+      query: nextQuery,
+      candidates: [],
+      selectedSong: null,
+      referenceLines: [],
+      status: 'queued',
+      error: undefined,
+    }));
+    const retryOptions = { ...getPlaylistThrottleOptions(playlistTracksRef.current.length), delayFirst: true };
+    const retryPromise = enqueuePlaylistManualRequest(async () => {
+      if (initialSearchPromise) await initialSearchPromise;
+      if (!isCurrentPlaylistOperation(track.id, version, requestId)) return null;
+      const [searchedTrack] = await runThrottled([track.id], async () => searchPlaylistTrack(track.id, nextQuery, requestId, version), retryOptions);
+      if (!searchedTrack || !isCurrentPlaylistOperation(track.id, version, requestId) || playlistSearchPhaseRef.current) return searchedTrack;
+      if (!searchedTrack.selectedSong) {
+        applyPlaylistAlignment(playlistTracksRef.current);
+        setError(searchedTrack.error ?? '搜索失败');
+        return searchedTrack;
+      }
+      updatePlaylistTrack(track.id, (current) => ({ ...current, status: 'lyric-loading', error: undefined }));
+      await runThrottled([searchedTrack.selectedSong], async (song) => loadPlaylistTrackLyric(track.id, song, requestId, version), retryOptions);
+      if (!isCurrentPlaylistOperation(track.id, version, requestId)) return null;
+      applyPlaylistAlignment(playlistTracksRef.current);
+      const currentTrack = playlistTracksRef.current[trackIndex];
+      setError(currentTrack?.status === 'error' ? currentTrack.error ?? '歌词获取失败' : '');
+      return currentTrack ?? null;
+    });
+    playlistRetryPromisesRef.current.set(track.id, retryPromise);
+    await retryPromise;
   }
 
   async function chooseSong(song: NeteaseSong) {
@@ -551,42 +725,27 @@ function App() {
 
   async function choosePlaylistSong(trackIndex: number, songId: number) {
     if (matchMode !== 'playlist') return;
-    const track = playlistTracks[trackIndex];
+    const track = playlistTracksRef.current[trackIndex];
     const song = track?.candidates.find((candidate) => candidate.id === songId);
     if (!track || !song) return;
-    const requestId = ++lyricRequestId.current;
-    const loadingTracks = playlistTracks.map((item, index) => index === trackIndex
-      ? { ...item, selectedSong: song, referenceLines: [], status: 'loading' as const, error: undefined }
-      : item);
-    setPlaylistTracks(loadingTracks);
-    setRows([]);
-    setReferenceLines([]);
-    setIsMatchingPlaylist(true);
+    const requestId = lyricRequestId.current;
+    const version = nextPlaylistOperationVersion(track.id);
+    if (playlistSearchPhaseRef.current) {
+      updatePlaylistTrack(track.id, (current) => ({ ...current, selectedSong: song, referenceLines: [], status: 'search-ready', error: undefined }));
+      return;
+    }
+    updatePlaylistTrack(track.id, (current) => ({ ...current, selectedSong: song, referenceLines: [], status: 'lyric-loading', error: undefined }));
     exportAnchorIdRef.current = null;
     setError('');
-    try {
-      const lyric = await fetchNeteaseLyric(song.id);
-      if (requestId !== lyricRequestId.current) return;
-      const lines = stripLyricTimestamps(lyric);
-      const nextTracks = loadingTracks.map((item, index) => index === trackIndex
-        ? lines.length > 0
-          ? { ...item, referenceLines: lines, status: 'ready' as const }
-          : { ...item, status: 'error' as const, error: '没有可用歌词' }
-        : item);
-      setPlaylistTracks(nextTracks);
-      applyPlaylistAlignment(nextTracks);
-      if (lines.length === 0) setError('所选歌曲没有可用歌词');
-    } catch (cause) {
-      if (requestId !== lyricRequestId.current) return;
-      const nextTracks = loadingTracks.map((item, index) => index === trackIndex
-        ? { ...item, status: 'error' as const, error: cause instanceof Error ? cause.message : '歌词获取失败' }
-        : item);
-      setPlaylistTracks(nextTracks);
-      applyPlaylistAlignment(nextTracks);
-      setError(cause instanceof Error ? cause.message : '歌词获取失败');
-    } finally {
-      if (requestId === lyricRequestId.current) setIsMatchingPlaylist(false);
-    }
+    const retryOptions = { ...getPlaylistThrottleOptions(playlistTracksRef.current.length), delayFirst: true };
+    await enqueuePlaylistManualRequest(async () => {
+      if (!isCurrentPlaylistOperation(track.id, version, requestId)) return;
+      await runThrottled([song], async (selected) => loadPlaylistTrackLyric(track.id, selected, requestId, version), retryOptions);
+      if (!isCurrentPlaylistOperation(track.id, version, requestId)) return;
+      applyPlaylistAlignment(playlistTracksRef.current);
+      const currentTrack = playlistTracksRef.current[trackIndex];
+      setError(currentTrack?.status === 'error' ? currentTrack.error ?? '歌词获取失败' : '');
+    });
   }
 
   function changeMatchingAlgorithm(algorithm: MatchingAlgorithm) {
@@ -807,7 +966,7 @@ function App() {
               {songs.length === 0 && <p className="empty-note">搜索结果会显示在这里。没有网络时仍可先整理现场文本。</p>}
               {songs.map((song) => <button type="button" className={`candidate ${selectedSong?.id === song.id ? 'chosen' : ''}`} key={song.id} onClick={() => chooseSong(song)}><span><strong>{song.name}</strong><small>{song.artists} · {song.album}</small></span><span aria-hidden="true">{selectedSong?.id === song.id ? '✓' : '→'}</span></button>)}
             </div>
-          </> : <PlaylistMatchPanel initialValue={playlistDraftRef.current} isMatchingPlaylist={isMatchingPlaylist} playlistTracks={playlistTracks} onDraftChange={(value) => { playlistDraftRef.current = value; }} onSubmit={handlePlaylistSearch} onChooseSong={choosePlaylistSong} />}
+          </> : <PlaylistMatchPanel initialValue={playlistDraftRef.current} isMatchingPlaylist={isMatchingPlaylist} isSearchingPlaylist={isSearchingPlaylist} playlistTracks={playlistTracks} onDraftChange={(value) => { playlistDraftRef.current = value; }} onSubmit={handlePlaylistSearch} onChooseSong={choosePlaylistSong} onRetryTrack={retryPlaylistTrack} />}
         </div>
       </section>
 
@@ -825,7 +984,7 @@ function App() {
         </div>
         <div className="diff-header"><span aria-hidden="true" /><span>剪映现场版</span><span>网易云参考版</span><span>处理</span></div>
         <div className="diff-table">
-          {(isLoadingLyric || isMatchingPlaylist) && <div className="loading-state">正在抓取歌词并按歌单顺序对齐…</div>}
+          {(isLoadingLyric || isMatchingPlaylist) && <div className="loading-state">{isSearchingPlaylist ? '正在逐首搜索歌单…' : '正在抓取歌词并按歌单顺序对齐…'}</div>}
           {!isLoadingLyric && !isMatchingPlaylist && rows.length === 0 && <div className="empty-review"><span className="empty-symbol">↔</span><strong>等待参考歌词</strong><p>{matchMode === 'playlist' ? '输入歌单后，工具会按顺序分段并保留现场独有内容。' : '先搜索并选择一首歌曲，工具会保留现场顺序，标出每处不同。'}</p></div>}
           {!isLoadingLyric && !isMatchingPlaylist && rows.map((row, index) => {
             const previousTrackIndex = index > 0 ? rows[index - 1].trackIndex : undefined;

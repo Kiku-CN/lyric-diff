@@ -16,6 +16,12 @@ function setInputValue(element: HTMLInputElement | HTMLTextAreaElement, value: s
   element.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => { resolve = next; });
+  return { promise, resolve };
+}
+
 describe('playlist mode controls', () => {
   let container: HTMLDivElement;
   let root: ReturnType<typeof createRoot>;
@@ -44,7 +50,7 @@ describe('playlist mode controls', () => {
 
   it('keeps playlist typing local until the form is submitted', async () => {
     const onSubmit = vi.fn();
-    await act(async () => root.render(<PlaylistMatchPanel initialValue="" isMatchingPlaylist={false} playlistTracks={[]} onDraftChange={vi.fn()} onSubmit={onSubmit} onChooseSong={vi.fn()} />));
+    await act(async () => root.render(<PlaylistMatchPanel initialValue="" isMatchingPlaylist={false} playlistTracks={[]} onDraftChange={vi.fn()} onSubmit={onSubmit} onChooseSong={vi.fn()} onRetryTrack={vi.fn()} />));
 
     await act(async () => setInputValue(container.querySelector<HTMLTextAreaElement>('#playlist')!, '歌A\n歌B'));
     expect(onSubmit).not.toHaveBeenCalled();
@@ -52,6 +58,55 @@ describe('playlist mode controls', () => {
     await act(async () => container.querySelector<HTMLFormElement>('form.playlist-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
 
     expect(onSubmit).toHaveBeenCalledWith('歌A\n歌B');
+  });
+
+  it('shows each successful search immediately but waits for all searches before fetching lyrics', async () => {
+    const secondSearch = deferred<Awaited<ReturnType<typeof searchNetease>>>();
+    vi.mocked(searchNetease).mockImplementation(async (query) => query === '歌A'
+      ? [{ id: 101, name: '歌A候选', artists: '歌手A', album: '专辑A' }]
+      : secondSearch.promise);
+    await act(async () => root.render(<App />));
+    await act(async () => container.querySelector<HTMLButtonElement>('button[role="tab"][aria-label="歌单模式"]')!.click());
+    await act(async () => setInputValue(container.querySelector<HTMLTextAreaElement>('#playlist')!, '歌A\n歌B'));
+    await act(async () => container.querySelector<HTMLFormElement>('form.playlist-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
+
+    expect(container.textContent).toContain('歌A候选 · 歌手A');
+    expect(container.textContent).toContain('已找到 1 个候选，等待其它歌曲搜索');
+    expect(vi.mocked(fetchNeteaseLyric)).not.toHaveBeenCalled();
+
+    secondSearch.resolve([{ id: 202, name: '歌B候选', artists: '歌手B', album: '专辑B' }]);
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    expect(vi.mocked(fetchNeteaseLyric)).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a candidate change behind the all-searches barrier', async () => {
+    const secondSearch = deferred<Awaited<ReturnType<typeof searchNetease>>>();
+    vi.mocked(searchNetease).mockImplementation(async (query) => query === '歌A'
+      ? [
+        { id: 101, name: '歌A候选一', artists: '歌手A', album: '专辑A' },
+        { id: 111, name: '歌A候选二', artists: '歌手A', album: '专辑A' },
+      ]
+      : secondSearch.promise);
+    await act(async () => root.render(<App />));
+    await act(async () => container.querySelector<HTMLButtonElement>('button[role="tab"][aria-label="歌单模式"]')!.click());
+    await act(async () => setInputValue(container.querySelector<HTMLTextAreaElement>('#playlist')!, '歌A\n歌B'));
+    await act(async () => container.querySelector<HTMLFormElement>('form.playlist-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
+    const candidateSelect = container.querySelector<HTMLSelectElement>('select[aria-label="选择第 1 首歌曲"]')!;
+    await act(async () => {
+      candidateSelect.value = '111';
+      candidateSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+
+    expect(vi.mocked(fetchNeteaseLyric)).not.toHaveBeenCalled();
+
+    secondSearch.resolve([{ id: 202, name: '歌B候选', artists: '歌手B', album: '专辑B' }]);
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    expect(vi.mocked(fetchNeteaseLyric)).toHaveBeenCalledWith(111);
   });
 
   it('searches and fetches every playlist item in order', async () => {
@@ -97,5 +152,70 @@ describe('playlist mode controls', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('1 首歌曲未能获取歌词');
     expect(Array.from(container.querySelectorAll('.reference-line > span')).map((line) => line.textContent)).toContain('A1');
     expect(container.querySelectorAll('.playlist-track').length).toBe(2);
+  });
+
+  it('retries only the selected playlist track', async () => {
+    let failedOnce = false;
+    vi.mocked(searchNetease).mockImplementation(async (query) => {
+      if (query === '失败歌' && !failedOnce) {
+        failedOnce = true;
+        throw new Error('搜索失败');
+      }
+      return [{ id: query === '歌A' ? 101 : 303, name: query, artists: '歌手', album: '专辑' }];
+    });
+    await act(async () => root.render(<App />));
+    await act(async () => container.querySelector<HTMLButtonElement>('button[role="tab"][aria-label="歌单模式"]')!.click());
+    await act(async () => setInputValue(container.querySelector<HTMLTextAreaElement>('#playlist')!, '歌A\n失败歌'));
+    await act(async () => container.querySelector<HTMLFormElement>('form.playlist-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="重新搜索第 2 首歌曲"]')!.click());
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    expect(vi.mocked(searchNetease).mock.calls.map(([query]) => query)).toEqual(['歌A', '失败歌', '失败歌']);
+    expect(container.textContent).toContain('失败歌 · 歌手');
+  });
+
+  it('serializes retries for different playlist tracks', async () => {
+    await act(async () => root.render(<App />));
+    await act(async () => container.querySelector<HTMLButtonElement>('button[role="tab"][aria-label="歌单模式"]')!.click());
+    await act(async () => setInputValue(container.querySelector<HTMLTextAreaElement>('#playlist')!, '歌A\n歌B'));
+    await act(async () => container.querySelector<HTMLFormElement>('form.playlist-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    const firstRetry = deferred<Awaited<ReturnType<typeof searchNetease>>>();
+    vi.mocked(searchNetease).mockClear();
+    vi.mocked(searchNetease).mockImplementation(async (query) => query === '歌A'
+      ? firstRetry.promise
+      : [{ id: 202, name: '歌B', artists: '歌手', album: '专辑' }]);
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="重新搜索第 1 首歌曲"]')!.click();
+      container.querySelector<HTMLButtonElement>('button[aria-label="重新搜索第 2 首歌曲"]')!.click();
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+
+    expect(vi.mocked(searchNetease).mock.calls.map(([query]) => query)).toEqual(['歌A']);
+
+    firstRetry.resolve([{ id: 101, name: '歌A', artists: '歌手', album: '专辑' }]);
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    expect(vi.mocked(searchNetease).mock.calls.map(([query]) => query)).toEqual(['歌A', '歌B']);
+  });
+
+  it('edits one playlist query, syncs the playlist text, and searches the new query', async () => {
+    await act(async () => root.render(<App />));
+    await act(async () => container.querySelector<HTMLButtonElement>('button[role="tab"][aria-label="歌单模式"]')!.click());
+    await act(async () => setInputValue(container.querySelector<HTMLTextAreaElement>('#playlist')!, '歌A\n歌B'));
+    await act(async () => container.querySelector<HTMLFormElement>('form.playlist-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="编辑第 1 首歌曲"]')!.click());
+    await act(async () => setInputValue(container.querySelector<HTMLInputElement>('input[aria-label="编辑第 1 首歌曲名"]')!, '新歌'));
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="保存并重新搜索第 1 首歌曲"]')!.click());
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    expect(vi.mocked(searchNetease)).toHaveBeenLastCalledWith('新歌');
+    expect(container.querySelector<HTMLTextAreaElement>('#playlist')!.value).toBe('新歌\n歌B');
+    expect(container.querySelector('.playlist-track strong')?.textContent).toBe('新歌');
   });
 });
