@@ -6,6 +6,17 @@ import { fetchNeteaseLyric, searchNetease } from '../src/server/netease';
 
 const replacementSrt = '1\n00:00:01,000 --> 00:00:03,000\n替换后的第一句\n\n2\n00:00:04,000 --> 00:00:06,000\n第二句';
 
+function formatSrtTime(totalSeconds: number) {
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},000`;
+}
+
+const largeSrt = Array.from({ length: 1_000 }, (_, index) => {
+  return `${index + 1}\n${formatSrtTime(index * 2)} --> ${formatSrtTime(index * 2 + 1)}\n第 ${index + 1} 行歌词`;
+}).join('\n\n');
+
 vi.mock('../src/server/netease', () => ({
   searchNetease: vi.fn(),
   fetchNeteaseLyric: vi.fn(),
@@ -92,4 +103,65 @@ describe('review table behavior', () => {
     expect(container.querySelector('.review-heading > div:first-child > p:not(.section-kicker)')?.textContent).toContain('现场曲');
     expect(container.querySelector<HTMLElement>('.diff-row .local')?.textContent).toContain('替换后的第一句');
   });
+
+  it('does not traverse the review rows for an unrelated search input change', async () => {
+    await act(async () => root.render(<App />));
+    await act(async () => {
+      setInputValue(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="剪映识别结果 SRT"]')!, largeSrt);
+      container.querySelector<HTMLButtonElement>('.confirm-source')!.click();
+    });
+    expect(container.querySelectorAll('.diff-row')).toHaveLength(1_000);
+
+    const originalMap = Array.prototype.map;
+    let reviewTraversals = 0;
+    const mapSpy = vi.spyOn(Array.prototype, 'map').mockImplementation(function (this: unknown[], callback, thisArg) {
+      if (this.length === 1_000 && typeof this[0] === 'object' && this[0] !== null && 'chosenText' in this[0]) reviewTraversals += 1;
+      return originalMap.call(this, callback, thisArg);
+    });
+    try {
+      await act(async () => setInputValue(container.querySelector<HTMLInputElement>('#song-query')!, '测试'));
+    } finally {
+      mapSpy.mockRestore();
+    }
+
+    expect(container.querySelector<HTMLInputElement>('#song-query')?.value).toBe('测试');
+    expect(reviewTraversals).toBe(0);
+  }, 30_000);
+
+  it('does not repeatedly scan all subtitle entries when editing a late review row', async () => {
+    await act(async () => root.render(<App />));
+    await act(async () => {
+      setInputValue(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="剪映识别结果 SRT"]')!, largeSrt);
+      container.querySelector<HTMLButtonElement>('.confirm-source')!.click();
+    });
+    expect(container.querySelectorAll('.diff-row')).toHaveLength(1_000);
+
+    const originalFind = Array.prototype.find;
+    const originalMap = Array.prototype.map;
+    let entryComparisons = 0;
+    let reviewTraversals = 0;
+    const findSpy = vi.spyOn(Array.prototype, 'find').mockImplementation(function (this: unknown[], callback, thisArg) {
+      if (this.length === 1_000 && typeof this[0] === 'object' && this[0] !== null && 'startMs' in this[0]) {
+        return originalFind.call(this, (value, index, array) => {
+          entryComparisons += 1;
+          return callback.call(thisArg, value, index, array);
+        });
+      }
+      return originalFind.call(this, callback, thisArg);
+    });
+    const mapSpy = vi.spyOn(Array.prototype, 'map').mockImplementation(function (this: unknown[], callback, thisArg) {
+      if (this.length === 1_000 && typeof this[0] === 'object' && this[0] !== null && 'chosenText' in this[0]) reviewTraversals += 1;
+      return originalMap.call(this, callback, thisArg);
+    });
+    try {
+      await act(async () => setInputValue(container.querySelector<HTMLInputElement>('input[aria-label="编辑第 900 行"]')!, '编辑后的歌词'));
+    } finally {
+      findSpy.mockRestore();
+      mapSpy.mockRestore();
+    }
+
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="编辑第 900 行"]')?.value).toBe('编辑后的歌词');
+    expect(entryComparisons).toBeLessThan(2_000);
+    expect(reviewTraversals).toBe(0);
+  }, 30_000);
 });

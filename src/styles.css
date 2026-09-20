@@ -130,7 +130,7 @@ textarea:focus, input:focus, select:focus { border-color: #8d9c92; box-shadow: 0
 .playlist-section-heading span { color: #9a6f22; font: 10px "DM Mono", monospace; }
 .playlist-section-heading strong { color: #1d2421; font-size: 12px; }
 .playlist-section-heading small { color: #89918c; font-size: 10px; }
-.diff-row { min-height: 58px; display: grid; grid-template-columns: 38px minmax(0, .9fr) minmax(0, .95fr) 640px; border-bottom: 1px solid #e1e2db; align-items: stretch; }
+.diff-row { min-height: 58px; display: grid; grid-template-columns: 38px minmax(0, .9fr) minmax(0, .95fr) 640px; border-bottom: 1px solid #e1e2db; align-items: stretch; content-visibility: auto; contain-intrinsic-size: auto 58px; }
 .diff-row:last-child { border-bottom: 0; }
 .line-number { padding: 18px 8px 0 0; color: #a6aca5; text-align: right; font: 10px "DM Mono", monospace; }
 .diff-cell { padding: 15px 14px; border-left: 1px solid #e1e2db; font: 12px/1.5 "DM Mono", monospace; white-space: pre-wrap; }
