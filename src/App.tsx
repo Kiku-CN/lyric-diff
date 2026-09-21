@@ -172,7 +172,7 @@ const ReviewRow = memo(function ReviewRow({ row, index, showTrackHeading, track,
   }
 
   return <Fragment>
-    {showTrackHeading && <div className="playlist-section-heading"><span>{String((row.trackIndex ?? 0) + 1).padStart(2, '0')}</span><strong>{track?.selectedSong?.name ?? track?.query ?? '歌单歌曲'}</strong><small>{track?.selectedSong?.artists}</small></div>}
+    {showTrackHeading && <div className="playlist-section-heading" data-track-index={row.trackIndex}><span>{String((row.trackIndex ?? 0) + 1).padStart(2, '0')}</span><strong>{track?.selectedSong?.name ?? track?.query ?? '歌单歌曲'}</strong><small>{track?.selectedSong?.artists}</small></div>}
     <div className={`diff-row ${row.kind} ${isAudioCurrent ? 'audio-current' : ''}`} data-row-id={row.id}>
       <div className="line-number" title={timestampMs === undefined ? undefined : formatSubtitleTimestamp(timestampMs)}>{String(index + 1).padStart(2, '0')}</div>
       <div className="diff-cell local"><span>{row.localText || '—'}</span></div>
@@ -211,6 +211,42 @@ type ReviewTableProps = {
   onPasteRow: () => Promise<string | null>;
   onPlayRow: (row: AlignmentRow) => void;
 };
+
+type ReviewOutlineProps = {
+  rows: PlaylistAlignmentRow[];
+  playlistTracks: PlaylistTrackState[];
+  currentAudioRowId: string | null;
+};
+
+const ReviewOutline = memo(function ReviewOutline({ rows, playlistTracks, currentAudioRowId }: ReviewOutlineProps) {
+  const [isExpanded, setIsExpanded] = useState(() => typeof window === 'undefined' || window.innerWidth >= 1840);
+  const currentTrackIndex = currentAudioRowId === null
+    ? undefined
+    : rows.find((row) => row.id === currentAudioRowId)?.trackIndex;
+  const rowCounts = useMemo(() => rows.reduce((counts, row) => {
+    if (row.trackIndex !== undefined) counts[row.trackIndex] = (counts[row.trackIndex] ?? 0) + 1;
+    return counts;
+  }, {} as Record<number, number>), [rows]);
+
+  function jumpToTrack(trackIndex: number) {
+    const target = document.querySelector<HTMLElement>(`[data-track-index="${trackIndex}"]`);
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  return <aside className={`review-outline ${isExpanded ? 'expanded' : 'collapsed'}`} aria-label="歌曲目录">
+    <div className="review-outline-heading"><span className="section-kicker">歌单目录</span><small>{playlistTracks.length} 首歌曲</small><button type="button" className="review-outline-toggle" aria-expanded={isExpanded} aria-controls="review-outline-list" onClick={() => setIsExpanded((expanded) => !expanded)}>{isExpanded ? '收起' : '目录'}</button></div>
+    <nav id="review-outline-list">
+      {playlistTracks.map((track, trackIndex) => {
+        const isCurrent = currentTrackIndex === trackIndex;
+        const songName = track.selectedSong?.name ?? track.query ?? `第 ${trackIndex + 1} 首歌曲`;
+        return <button type="button" key={track.id} className={`review-outline-song ${isCurrent ? 'current' : ''}`} aria-current={isCurrent ? 'true' : undefined} aria-label={`跳转到第 ${trackIndex + 1} 首歌曲 ${songName}`} onClick={() => jumpToTrack(trackIndex)}>
+          <span className="review-outline-index">{String(trackIndex + 1).padStart(2, '0')}</span>
+          <span className="review-outline-copy"><strong>{songName}</strong><small>{isCurrent ? '播放中' : `${rowCounts[trackIndex] ?? 0} 行`}</small></span>
+        </button>;
+      })}
+    </nav>
+  </aside>;
+});
 
 const ReviewTable = memo(function ReviewTable({ isLoadingLyric, isMatchingPlaylist, isSearchingPlaylist, matchMode, rows, playlistTracks, entriesById, hasAudio, copiedLine, activePlaybackRowId, currentAudioRowId, onChooseRow, onUpdateRow, onToggleExport, onCopyReference, onPasteRow, onPlayRow }: ReviewTableProps) {
   return <div className="diff-table">
@@ -1063,7 +1099,10 @@ function App() {
           <label className="segmentation-toggle" title="切换智能分句会重置逐行修改"><input type="checkbox" aria-label="智能分句" checked={smartSegmentation} onChange={(event) => changeSmartSegmentation(event.target.checked)} />智能分句</label>
         </div>
         <div className="diff-header"><span aria-hidden="true" /><span>剪映现场版</span><span>网易云参考版</span><span>处理</span></div>
-        <ReviewTable isLoadingLyric={isLoadingLyric} isMatchingPlaylist={isMatchingPlaylist} isSearchingPlaylist={isSearchingPlaylist} matchMode={matchMode} rows={rows} playlistTracks={playlistTracks} entriesById={entriesById} hasAudio={audioUrl !== null} copiedLine={copiedLine} activePlaybackRowId={activePlaybackRowId} currentAudioRowId={currentAudioRowId} onChooseRow={chooseRow} onUpdateRow={updateRow} onToggleExport={toggleExport} onCopyReference={copyReference} onPasteRow={pasteRow} onPlayRow={playRow} />
+        <div className={`review-layout ${matchMode === 'playlist' && playlistTracks.length > 1 ? 'has-outline' : ''}`}>
+          {matchMode === 'playlist' && playlistTracks.length > 1 && <ReviewOutline rows={rows} playlistTracks={playlistTracks} currentAudioRowId={currentAudioRowId} />}
+          <ReviewTable isLoadingLyric={isLoadingLyric} isMatchingPlaylist={isMatchingPlaylist} isSearchingPlaylist={isSearchingPlaylist} matchMode={matchMode} rows={rows} playlistTracks={playlistTracks} entriesById={entriesById} hasAudio={audioUrl !== null} copiedLine={copiedLine} activePlaybackRowId={activePlaybackRowId} currentAudioRowId={currentAudioRowId} onChooseRow={chooseRow} onUpdateRow={updateRow} onToggleExport={toggleExport} onCopyReference={copyReference} onPasteRow={pasteRow} onPlayRow={playRow} />
+        </div>
       </section>
 
       <footer className="footer-note"><span>原始字幕不会被覆盖</span><span>·</span><span>网易云歌词仅作为参考</span><span>·</span><span>所有行按勾选结果导出</span></footer>

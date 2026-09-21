@@ -22,6 +22,15 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function createAudioFile() {
+  return new File(['audio'], '现场.mp3', { type: 'audio/mpeg' });
+}
+
+function selectFile(input: HTMLInputElement, file: File) {
+  Object.defineProperty(input, 'files', { configurable: true, value: [file] });
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
 describe('playlist mode controls', () => {
   let container: HTMLDivElement;
   let root: ReturnType<typeof createRoot>;
@@ -29,6 +38,8 @@ describe('playlist mode controls', () => {
   beforeEach(() => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     vi.useFakeTimers();
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:audio') });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
@@ -123,6 +134,54 @@ describe('playlist mode controls', () => {
     expect(vi.mocked(fetchNeteaseLyric).mock.calls.map(([id]) => id)).toEqual([101, 202]);
     expect(Array.from(container.querySelectorAll('.diff-row .reference-line > span')).map((cell) => cell.textContent)).toEqual(['A1', 'A2', 'B1', 'B2']);
     expect(container.querySelectorAll('.playlist-track').length).toBe(2);
+  });
+
+  it('shows a song outline and jumps to the selected song section', async () => {
+    const source = '1\n00:00:01,000 --> 00:00:02,000\nA1\n\n2\n00:00:02,000 --> 00:00:03,000\nA2\n\n3\n00:00:03,000 --> 00:00:04,000\nB1\n\n4\n00:00:04,000 --> 00:00:05,000\nB2';
+    await act(async () => root.render(<App />));
+    await act(async () => setInputValue(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="剪映识别结果 SRT"]')!, source));
+    await act(async () => container.querySelector<HTMLButtonElement>('.confirm-source')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('button[role="tab"][aria-label="歌单模式"]')!.click());
+    await act(async () => setInputValue(container.querySelector<HTMLTextAreaElement>('#playlist')!, '歌A\n歌B'));
+    await act(async () => container.querySelector<HTMLFormElement>('form.playlist-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+    const outlineToggle = container.querySelector<HTMLButtonElement>('.review-outline-toggle')!;
+    expect(outlineToggle.getAttribute('aria-expanded')).toBe('false');
+    await act(async () => outlineToggle.click());
+    expect(outlineToggle.getAttribute('aria-expanded')).toBe('true');
+    const outlineButtons = container.querySelectorAll<HTMLButtonElement>('.review-outline-song');
+    expect(outlineButtons).toHaveLength(2);
+    expect(outlineButtons[0].textContent).toContain('歌A');
+
+    await act(async () => outlineButtons[1].click());
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
+    expect(container.querySelector('[data-track-index="1"]')).not.toBeNull();
+
+    await act(async () => outlineToggle.click());
+    expect(outlineToggle.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('marks the song containing the current audio row in the outline', async () => {
+    const source = '1\n00:00:01,000 --> 00:00:02,000\nA1\n\n2\n00:00:03,000 --> 00:00:04,000\nB1';
+    await act(async () => root.render(<App />));
+    await act(async () => setInputValue(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="剪映识别结果 SRT"]')!, source));
+    await act(async () => container.querySelector<HTMLButtonElement>('.confirm-source')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('button[role="tab"][aria-label="歌单模式"]')!.click());
+    await act(async () => setInputValue(container.querySelector<HTMLTextAreaElement>('#playlist')!, '歌A\n歌B'));
+    await act(async () => container.querySelector<HTMLFormElement>('form.playlist-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    await act(async () => selectFile(container.querySelector<HTMLInputElement>('input.audio-file-input')!, createAudioFile()));
+    const audio = container.querySelector<HTMLAudioElement>('.audio-engine')!;
+    audio.currentTime = 3.5;
+    await act(async () => audio.dispatchEvent(new Event('timeupdate', { bubbles: true })));
+
+    const activeOutlineItem = container.querySelector('.review-outline [aria-current="true"]');
+    expect(activeOutlineItem?.textContent).toContain('歌B');
   });
 
   it('keeps normal search independent from the playlist textarea', async () => {
