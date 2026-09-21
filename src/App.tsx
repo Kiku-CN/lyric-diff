@@ -134,25 +134,41 @@ type ReviewRowProps = {
   onUpdateRow: (id: string, patch: Partial<AlignmentRow>) => void;
   onToggleExport: (id: string, checked: boolean, shiftKey: boolean) => void;
   onCopyReference: (row: AlignmentRow, lineText: string, lineIndex: number) => void;
-  onPasteRow: (id: string) => Promise<string | null>;
+  onPasteRow: () => Promise<string | null>;
   onPlayRow: (row: AlignmentRow) => void;
   isPlaybackActive: boolean;
   isAudioCurrent: boolean;
 };
 
 const ReviewRow = memo(function ReviewRow({ row, index, showTrackHeading, track, copiedLineIndex, timestampMs, playbackTimeMs, onChooseRow, onUpdateRow, onToggleExport, onCopyReference, onPasteRow, onPlayRow, isPlaybackActive, isAudioCurrent }: ReviewRowProps) {
-  const [chosenText, setChosenText] = useState(row.chosenText);
-  const [includeInExport, setIncludeInExport] = useState(row.includeInExport);
-  const [needsReview, setNeedsReview] = useState(row.needsReview);
+  const [chosenTextDraft, setChosenTextDraft] = useState({ row, value: row.chosenText });
+  const [exportDraft, setExportDraft] = useState({ row, value: row.includeInExport });
+  const [reviewDraft, setReviewDraft] = useState({ row, value: row.needsReview });
+  const currentRowRef = useRef<PlaylistAlignmentRow | null>(row);
+  const draftVersionRef = useRef(0);
+  currentRowRef.current = row;
+  const chosenText = chosenTextDraft.row === row ? chosenTextDraft.value : row.chosenText;
+  const includeInExport = exportDraft.row === row ? exportDraft.value : row.includeInExport;
+  const needsReview = reviewDraft.row === row ? reviewDraft.value : row.needsReview;
+
+  useEffect(() => {
+    currentRowRef.current = row;
+    return () => { currentRowRef.current = null; };
+  }, []);
 
   function handleChoose(choice: 'local' | 'reference') {
-    setChosenText(choice === 'reference' ? row.referenceText : row.localText);
+    draftVersionRef.current += 1;
+    setChosenTextDraft({ row, value: choice === 'reference' ? row.referenceText : row.localText });
     onChooseRow(row, choice);
   }
 
   async function handlePaste() {
-    const text = await onPasteRow(row.id);
-    if (text !== null) setChosenText(text);
+    const version = ++draftVersionRef.current;
+    const text = await onPasteRow();
+    if (text !== null && currentRowRef.current === row && draftVersionRef.current === version) {
+      setChosenTextDraft({ row, value: text });
+      onUpdateRow(row.id, { chosenText: text });
+    }
   }
 
   return <Fragment>
@@ -165,10 +181,10 @@ const ReviewRow = memo(function ReviewRow({ row, index, showTrackHeading, track,
         <button type="button" className={`row-playback ${isPlaybackActive ? 'playing' : ''}`} onClick={() => onPlayRow(row)} disabled={playbackTimeMs === undefined} aria-pressed={isPlaybackActive} aria-label={playbackTimeMs === undefined ? `第 ${index + 1} 行没有可播放时间轴` : `${isPlaybackActive ? '播放中' : '播放'}第 ${index + 1} 行`} title={playbackTimeMs === undefined ? '该行没有本地字幕时间轴' : `从 ${formatAudioTime(playbackTimeMs / 1000)} 播放`}>{isPlaybackActive ? '播放中' : '播放'}</button>
         <button type="button" onClick={() => handleChoose('local')} className={chosenText === row.localText ? 'active' : ''} disabled={row.kind === 'add'}>现场</button>
         <button type="button" onClick={() => handleChoose('reference')} className={chosenText === row.referenceText && Boolean(row.referenceText) ? 'active reference-choice' : ''} disabled={!row.referenceText || row.localIds.length > 1} title={row.localIds.length > 1 ? '多个 SRT 条目合并显示，参考文本仅用于对比' : undefined}>参考</button>
-        <input aria-label={`编辑第 ${index + 1} 行`} value={chosenText} disabled={row.localIds.length > 1} onChange={(event) => { setChosenText(event.target.value); onUpdateRow(row.id, { chosenText: event.target.value }); }} />
+        <input aria-label={`编辑第 ${index + 1} 行`} value={chosenText} disabled={row.localIds.length > 1} onChange={(event) => { draftVersionRef.current += 1; setChosenTextDraft({ row, value: event.target.value }); onUpdateRow(row.id, { chosenText: event.target.value }); }} />
         <button type="button" className="clear-paste-row" aria-label={`清空并粘贴第 ${index + 1} 行`} title="清空当前输入并粘贴剪切板文本" onClick={() => { void handlePaste(); }} disabled={row.localIds.length > 1}>清空并粘贴</button>
-        <label className="export-toggle"><input type="checkbox" aria-label={`导出第 ${index + 1} 行`} checked={includeInExport} onChange={(event) => { setIncludeInExport(event.target.checked); onToggleExport(row.id, event.target.checked, event.nativeEvent instanceof MouseEvent && event.nativeEvent.shiftKey); }} />导出</label>
-        <label className="review-toggle"><input type="checkbox" aria-label={`复核第 ${index + 1} 行`} checked={needsReview} onChange={(event) => { setNeedsReview(event.target.checked); onUpdateRow(row.id, { needsReview: event.target.checked }); }} />复核</label>
+        <label className="export-toggle"><input type="checkbox" aria-label={`导出第 ${index + 1} 行`} checked={includeInExport} onChange={(event) => { setExportDraft({ row, value: event.target.checked }); onToggleExport(row.id, event.target.checked, event.nativeEvent instanceof MouseEvent && event.nativeEvent.shiftKey); }} />导出</label>
+        <label className="review-toggle"><input type="checkbox" aria-label={`复核第 ${index + 1} 行`} checked={needsReview} onChange={(event) => { setReviewDraft({ row, value: event.target.checked }); onUpdateRow(row.id, { needsReview: event.target.checked }); }} />复核</label>
       </div>
     </div>
   </Fragment>;
@@ -184,7 +200,6 @@ type ReviewTableProps = {
   rows: PlaylistAlignmentRow[];
   playlistTracks: PlaylistTrackState[];
   entriesById: ReadonlyMap<string, SubtitleEntry>;
-  revision: number;
   hasAudio: boolean;
   copiedLine: CopiedLine | null;
   activePlaybackRowId: string | null;
@@ -193,11 +208,11 @@ type ReviewTableProps = {
   onUpdateRow: (id: string, patch: Partial<AlignmentRow>) => void;
   onToggleExport: (id: string, checked: boolean, shiftKey: boolean) => void;
   onCopyReference: (row: AlignmentRow, lineText: string, lineIndex: number) => void;
-  onPasteRow: (id: string) => Promise<string | null>;
+  onPasteRow: () => Promise<string | null>;
   onPlayRow: (row: AlignmentRow) => void;
 };
 
-const ReviewTable = memo(function ReviewTable({ isLoadingLyric, isMatchingPlaylist, isSearchingPlaylist, matchMode, rows, playlistTracks, entriesById, revision, hasAudio, copiedLine, activePlaybackRowId, currentAudioRowId, onChooseRow, onUpdateRow, onToggleExport, onCopyReference, onPasteRow, onPlayRow }: ReviewTableProps) {
+const ReviewTable = memo(function ReviewTable({ isLoadingLyric, isMatchingPlaylist, isSearchingPlaylist, matchMode, rows, playlistTracks, entriesById, hasAudio, copiedLine, activePlaybackRowId, currentAudioRowId, onChooseRow, onUpdateRow, onToggleExport, onCopyReference, onPasteRow, onPlayRow }: ReviewTableProps) {
   return <div className="diff-table">
     {(isLoadingLyric || isMatchingPlaylist) && <div className="loading-state">{isSearchingPlaylist ? '正在逐首搜索歌单…' : '正在抓取歌词并按歌单顺序对齐…'}</div>}
     {!isLoadingLyric && !isMatchingPlaylist && rows.length === 0 && <div className="empty-review"><span className="empty-symbol">↔</span><strong>等待参考歌词</strong><p>{matchMode === 'playlist' ? '输入歌单后，工具会按顺序分段并保留现场独有内容。' : '先搜索并选择一首歌曲，工具会保留现场顺序，标出每处不同。'}</p></div>}
@@ -206,7 +221,7 @@ const ReviewTable = memo(function ReviewTable({ isLoadingLyric, isMatchingPlayli
       const showTrackHeading = matchMode === 'playlist' && row.trackIndex !== undefined && row.trackIndex !== previousTrackIndex;
       const track = row.trackIndex === undefined ? undefined : playlistTracks[row.trackIndex];
       const playbackTimeMs = entriesById.get(row.localIds[0])?.startMs;
-      return <ReviewRow key={`${revision}-${row.id}`} row={row} index={index} showTrackHeading={showTrackHeading} track={track} copiedLineIndex={copiedLine?.rowId === row.id ? copiedLine.lineIndex : null} timestampMs={playbackTimeMs} playbackTimeMs={hasAudio ? playbackTimeMs : undefined} onChooseRow={onChooseRow} onUpdateRow={onUpdateRow} onToggleExport={onToggleExport} onCopyReference={onCopyReference} onPasteRow={onPasteRow} onPlayRow={onPlayRow} isPlaybackActive={activePlaybackRowId === row.id} isAudioCurrent={currentAudioRowId === row.id} />;
+      return <ReviewRow key={row.id} row={row} index={index} showTrackHeading={showTrackHeading} track={track} copiedLineIndex={copiedLine?.rowId === row.id ? copiedLine.lineIndex : null} timestampMs={playbackTimeMs} playbackTimeMs={hasAudio ? playbackTimeMs : undefined} onChooseRow={onChooseRow} onUpdateRow={onUpdateRow} onToggleExport={onToggleExport} onCopyReference={onCopyReference} onPasteRow={onPasteRow} onPlayRow={onPlayRow} isPlaybackActive={activePlaybackRowId === row.id} isAudioCurrent={currentAudioRowId === row.id} />;
     })}
   </div>;
 });
@@ -224,7 +239,6 @@ function App() {
   const [selectedSong, setSelectedSong] = useState<NeteaseSong | null>(null);
   const [playlistTracks, setPlaylistTracks] = useState<PlaylistTrackState[]>([]);
   const [rows, setRows] = useState<PlaylistAlignmentRow[]>(() => alignSubtitles(parseSubtitle(starterSrt, 'srt'), [], { algorithm: 'fragment', smartSegmentation: true }));
-  const [reviewRevision, setReviewRevision] = useState(0);
   const [referenceLines, setReferenceLines] = useState<string[]>([]);
   const [matchingAlgorithm, setMatchingAlgorithm] = useState<MatchingAlgorithm>('fragment');
   const [smartSegmentation, setSmartSegmentation] = useState(true);
@@ -266,6 +280,8 @@ function App() {
 
   const entriesById = useMemo(() => new Map(entries.map((entry) => [entry.id, entry] as const)), [entries]);
   const rowIndexById = useMemo(() => new Map(rows.map((row, index) => [row.id, index] as const)), [rows]);
+  const rowIndexByIdRef = useRef(rowIndexById);
+  rowIndexByIdRef.current = rowIndexById;
   const hasTimeline = useMemo(() => entries.some((entry) => entry.startMs !== undefined), [entries]);
   const diffStats = useMemo(() => rows.reduce((stats, row) => {
     stats[row.kind] += 1;
@@ -282,7 +298,6 @@ function App() {
   function replaceReviewRows(nextRows: PlaylistAlignmentRow[]) {
     rowsRef.current = nextRows;
     setRows(nextRows);
-    setReviewRevision((current) => current + 1);
   }
 
   function replacePlaylistTracks(tracks: PlaylistTrackState[]) {
@@ -830,19 +845,19 @@ function App() {
   }
 
   const updateRow = useCallback((id: string, patch: Partial<AlignmentRow>) => {
-    const rowIndex = rowIndexById.get(id);
+    const rowIndex = rowIndexByIdRef.current.get(id);
     if (rowIndex === undefined) return;
     const nextRows = rowsRef.current.slice();
     nextRows[rowIndex] = { ...nextRows[rowIndex], ...patch };
     rowsRef.current = nextRows;
-  }, [rowIndexById]);
+  }, []);
 
   const toggleExport = useCallback((id: string, checked: boolean, shiftKey: boolean) => {
     const currentRows = rowsRef.current;
-    const rowIndex = rowIndexById.get(id);
+    const rowIndex = rowIndexByIdRef.current.get(id);
     if (rowIndex === undefined) return;
     const anchorIndex = shiftKey && exportAnchorIdRef.current
-      ? rowIndexById.get(exportAnchorIdRef.current) ?? -1
+      ? rowIndexByIdRef.current.get(exportAnchorIdRef.current) ?? -1
       : -1;
     const rangeStart = anchorIndex >= 0 ? Math.min(anchorIndex, rowIndex) : rowIndex;
     const rangeEnd = anchorIndex >= 0 ? Math.max(anchorIndex, rowIndex) : rowIndex;
@@ -858,8 +873,7 @@ function App() {
       : row);
     rowsRef.current = nextRows;
     setRows(nextRows);
-    setReviewRevision((current) => current + 1);
-  }, [rowIndexById]);
+  }, []);
 
   const chooseRow = useCallback((row: AlignmentRow, choice: 'local' | 'reference') => {
     updateRow(row.id, { chosenText: choice === 'reference' ? row.referenceText : row.localText });
@@ -876,16 +890,14 @@ function App() {
     }
   }, []);
 
-  const pasteRow = useCallback(async (id: string) => {
+  const pasteRow = useCallback(async () => {
     try {
-      const text = await navigator.clipboard.readText();
-      updateRow(id, { chosenText: text });
-      return text;
+      return await navigator.clipboard.readText();
     } catch {
       setError('无法读取剪贴板，请检查浏览器权限');
       return null;
     }
-  }, [updateRow]);
+  }, []);
 
   const playRow = useCallback((row: AlignmentRow) => {
     const entry = entriesById.get(row.localIds[0]);
@@ -1051,7 +1063,7 @@ function App() {
           <label className="segmentation-toggle" title="切换智能分句会重置逐行修改"><input type="checkbox" aria-label="智能分句" checked={smartSegmentation} onChange={(event) => changeSmartSegmentation(event.target.checked)} />智能分句</label>
         </div>
         <div className="diff-header"><span aria-hidden="true" /><span>剪映现场版</span><span>网易云参考版</span><span>处理</span></div>
-        <ReviewTable isLoadingLyric={isLoadingLyric} isMatchingPlaylist={isMatchingPlaylist} isSearchingPlaylist={isSearchingPlaylist} matchMode={matchMode} rows={rows} playlistTracks={playlistTracks} entriesById={entriesById} revision={reviewRevision} hasAudio={audioUrl !== null} copiedLine={copiedLine} activePlaybackRowId={activePlaybackRowId} currentAudioRowId={currentAudioRowId} onChooseRow={chooseRow} onUpdateRow={updateRow} onToggleExport={toggleExport} onCopyReference={copyReference} onPasteRow={pasteRow} onPlayRow={playRow} />
+        <ReviewTable isLoadingLyric={isLoadingLyric} isMatchingPlaylist={isMatchingPlaylist} isSearchingPlaylist={isSearchingPlaylist} matchMode={matchMode} rows={rows} playlistTracks={playlistTracks} entriesById={entriesById} hasAudio={audioUrl !== null} copiedLine={copiedLine} activePlaybackRowId={activePlaybackRowId} currentAudioRowId={currentAudioRowId} onChooseRow={chooseRow} onUpdateRow={updateRow} onToggleExport={toggleExport} onCopyReference={copyReference} onPasteRow={pasteRow} onPlayRow={playRow} />
       </section>
 
       <footer className="footer-note"><span>原始字幕不会被覆盖</span><span>·</span><span>网易云歌词仅作为参考</span><span>·</span><span>所有行按勾选结果导出</span></footer>

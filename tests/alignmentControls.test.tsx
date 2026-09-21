@@ -104,6 +104,40 @@ describe('alignment controls', () => {
     expect(input.value).toBe('剪切板校对文本');
   });
 
+  it('ignores a pending paste after a Shift selection replaces the row and the user edits it', async () => {
+    await act(async () => root.render(<App />));
+    let resolveClipboard!: (text: string) => void;
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { readText: vi.fn().mockReturnValue(new Promise<string>((resolve) => { resolveClipboard = resolve; })) },
+    });
+
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="清空并粘贴第 2 行"]')!.click());
+    const checkboxes = () => Array.from(container.querySelectorAll<HTMLInputElement>('.diff-row input[aria-label^="导出第"]'));
+    await act(async () => checkboxes()[0].click());
+    await act(async () => {
+      checkboxes()[2].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: true }));
+    });
+
+    const edit = container.querySelector<HTMLInputElement>('input[aria-label="编辑第 2 行"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(edit, '后续编辑');
+      edit.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => resolveClipboard('过期粘贴'));
+    expect(edit.value).toBe('后续编辑');
+
+    await act(async () => checkboxes()[1].click());
+    await act(async () => {
+      const format = container.querySelector<HTMLSelectElement>('select[aria-label="导出格式"]')!;
+      format.value = 'txt';
+      format.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="预览校对稿"]')!.click());
+    expect(container.querySelector('.preview-content')?.textContent).toContain('后续编辑');
+    expect(container.querySelector('.preview-content')?.textContent).not.toContain('过期粘贴');
+  });
+
   it('uses the latest settings when lyrics finish loading', async () => {
     let resolveLyric!: (value: string) => void;
     vi.mocked(fetchNeteaseLyric).mockReturnValue(new Promise((resolve) => { resolveLyric = resolve; }));
@@ -164,6 +198,46 @@ describe('alignment controls', () => {
       shiftClick(checkboxes()[1]);
     });
     expect(checkboxes().map((checkbox) => checkbox.checked)).toEqual([false, true, true, true, true, false]);
+  });
+
+  it('keeps the clicked export checkbox focused and mounted after a Shift range selection', async () => {
+    vi.mocked(fetchNeteaseLyric).mockResolvedValue('片头\n把酒倒满\n中间新增\n朋友一生一起走\n那些日子不再有\n片尾');
+    await act(async () => root.render(<App />));
+    await act(async () => {
+      container.querySelector<HTMLFormElement>('form.search-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await act(async () => container.querySelector<HTMLButtonElement>('.candidate')!.click());
+
+    const checkboxes = () => Array.from(container.querySelectorAll<HTMLInputElement>('.diff-row .row-controls input[aria-label^="导出第"]'));
+    await act(async () => checkboxes()[1].click());
+    const target = checkboxes()[4];
+    target.focus();
+
+    await act(async () => {
+      target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: true }));
+    });
+
+    expect(checkboxes().map((checkbox) => checkbox.checked)).toEqual([false, false, false, false, false, false]);
+    expect(checkboxes()[4]).toBe(target);
+    expect(document.activeElement).toBe(target);
+  });
+
+  it('does not rerender rows outside a Shift export range', async () => {
+    vi.mocked(fetchNeteaseLyric).mockResolvedValue('片头\n把酒倒满\n中间新增\n朋友一生一起走\n那些日子不再有\n片尾');
+    await act(async () => root.render(<App />));
+    await act(async () => {
+      container.querySelector<HTMLFormElement>('form.search-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await act(async () => container.querySelector<HTMLButtonElement>('.candidate')!.click());
+
+    const checkboxes = () => Array.from(container.querySelectorAll<HTMLInputElement>('.diff-row .row-controls input[aria-label^="导出第"]'));
+    await act(async () => checkboxes()[1].click());
+    vi.mocked(splitReferenceLines).mockClear();
+    await act(async () => {
+      checkboxes()[4].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: true }));
+    });
+
+    expect(vi.mocked(splitReferenceLines)).toHaveBeenCalledTimes(4);
   });
 
   it('only rerenders the review row being edited or toggled', async () => {
