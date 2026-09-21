@@ -63,6 +63,30 @@ describe('review table behavior', () => {
     expect(headers.map((header) => header.textContent)).toEqual(['', '剪映现场版', '网易云参考版', '处理']);
   });
 
+  it('shows a fixed return-to-top control after the page scrolls', async () => {
+    await act(async () => root.render(<App />));
+
+    expect(container.querySelector('.review-back-to-top')).toBeNull();
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 480, writable: true });
+    await act(async () => window.dispatchEvent(new Event('scroll')));
+
+    const button = container.querySelector<HTMLButtonElement>('.review-back-to-top');
+    expect(button?.getAttribute('aria-label')).toBe('返回顶部');
+  });
+
+  it('smoothly returns to the page top from the review table', async () => {
+    const scrollTo = vi.fn();
+    Object.defineProperty(window, 'scrollTo', { configurable: true, value: scrollTo });
+    await act(async () => root.render(<App />));
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 480, writable: true });
+    await act(async () => window.dispatchEvent(new Event('scroll')));
+
+    await act(async () => container.querySelector<HTMLButtonElement>('.review-back-to-top')!.click());
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
+    expect(container.querySelector('.review-back-to-top')).toBeNull();
+  });
+
   it('uses the local row timestamp as the line-number title', async () => {
     await act(async () => root.render(<App />));
 

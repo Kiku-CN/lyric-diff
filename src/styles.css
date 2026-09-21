@@ -149,6 +149,9 @@ textarea:focus, input:focus, select:focus { border-color: #8d9c92; box-shadow: 0
 .review-outline-copy small { margin-top: 3px; color: #89918c; font: 10px "DM Mono", monospace; }
 .review-outline-song.current .review-outline-copy small { color: #28795f; font-weight: 500; }
 .shell.has-audio .review-outline { top: 92px; max-height: calc(100vh - 110px); }
+.review-back-to-top { position: fixed; right: 16px; bottom: 24px; z-index: 25; display: grid; place-items: center; width: 42px; height: 42px; border: 1px solid #c8d6cd; background: #fffefa; color: #28795f; box-shadow: 0 8px 20px rgb(29 36 33 / 12%); font-size: 21px; line-height: 1; }
+.review-back-to-top:hover, .review-back-to-top:focus-visible { border-color: #28795f; background: #e8f4ec; }
+.review-back-to-top:focus-visible { outline: 2px solid #28795f; outline-offset: 3px; }
 .diff-table { border-bottom: 1px solid #cacdc3; }
 .playlist-section-heading { display: flex; align-items: baseline; gap: 9px; padding: 10px 14px 9px 38px; border-top: 1px solid #cacdc3; background: #f3f0e7; color: #69736d; }
 .playlist-section-heading span { color: #9a6f22; font: 10px "DM Mono", monospace; }

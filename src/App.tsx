@@ -310,6 +310,7 @@ function App() {
   const [lyricFollowEnabled, setLyricFollowEnabled] = useState(false);
   const [currentAudioRowId, setCurrentAudioRowId] = useState<string | null>(null);
   const [copiedLine, setCopiedLine] = useState<CopiedLine | null>(null);
+  const [isBackToTopVisible, setIsBackToTopVisible] = useState(false);
   const rowsRef = useRef(rows);
   const exportAnchorIdRef = useRef<string | null>(null);
   playlistTracksRef.current = playlistTracks;
@@ -373,6 +374,14 @@ function App() {
       if (audioUrl) URL.revokeObjectURL(audioUrl);
     };
   }, [audioUrl]);
+
+  useEffect(() => {
+    function handlePageScroll() {
+      setIsBackToTopVisible(window.scrollY > 320);
+    }
+    window.addEventListener('scroll', handlePageScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handlePageScroll);
+  }, []);
 
   useEffect(() => {
     if (!audioUrl) return;
@@ -1000,6 +1009,11 @@ function App() {
     URL.revokeObjectURL(url);
   }
 
+  function scrollToTop() {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setIsBackToTopVisible(false);
+  }
+
   return (
     <main className={`shell ${audioUrl ? 'has-audio' : ''}`}>
       <header className="topbar">
@@ -1103,6 +1117,7 @@ function App() {
           {matchMode === 'playlist' && playlistTracks.length > 1 && <ReviewOutline rows={rows} playlistTracks={playlistTracks} currentAudioRowId={currentAudioRowId} />}
           <ReviewTable isLoadingLyric={isLoadingLyric} isMatchingPlaylist={isMatchingPlaylist} isSearchingPlaylist={isSearchingPlaylist} matchMode={matchMode} rows={rows} playlistTracks={playlistTracks} entriesById={entriesById} hasAudio={audioUrl !== null} copiedLine={copiedLine} activePlaybackRowId={activePlaybackRowId} currentAudioRowId={currentAudioRowId} onChooseRow={chooseRow} onUpdateRow={updateRow} onToggleExport={toggleExport} onCopyReference={copyReference} onPasteRow={pasteRow} onPlayRow={playRow} />
         </div>
+        {isBackToTopVisible && <button type="button" className="review-back-to-top" onClick={scrollToTop} aria-label="返回顶部" title="返回顶部">↑</button>}
       </section>
 
       <footer className="footer-note"><span>原始字幕不会被覆盖</span><span>·</span><span>网易云歌词仅作为参考</span><span>·</span><span>所有行按勾选结果导出</span></footer>
